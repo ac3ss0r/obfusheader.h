@@ -85,7 +85,7 @@ int main() {
 }
 ```
 
-### Existing solutions
+## Existing solutions
 
 There already are some similar solutions for compile-time obfuscation, but all of them have problems that forced me to implement my own. 
 
