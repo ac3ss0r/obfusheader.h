@@ -21,12 +21,12 @@ Unlike Windows x86_64 with VMProtect, Themida and other tools, on some platforms
 ## Usage
 
 ### Settings
-You can change them in the start of the header. This will affect how to obfuscation works in different ways. The default settings are the best so you won't need to change anything for it to work unless it's a special case. Note that disabling THREADLOCAL mode will expose your constant while compiling with optimization flags such as -O3, O2 so don't disable it if you use them.
+You can change them in the start of the header. This will affect how to obfuscation works in different ways. The default settings are the best so you won't need to change anything for it to work unless it's a special case. Note that disabling THREAD_LOCAL mode will expose your constant while compiling with optimization flags such as -O3, O2 so don't disable it if you use them.
 ```c++
 // Settings 
-#define THREADLOCAL
+#define THREAD_LOCAL
 #define CFLOW
-#define FORCEINLINE
+#define FORCE_INLINE
 ```
 ### Basic constants encryption.
 You can encrypt strings and any xor-able decimals easily. The macro is universal - it accepts any supported type as an argument.
