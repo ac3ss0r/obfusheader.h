@@ -2,19 +2,19 @@
 #include <type_traits>
 
 // Settings 
-#define THREADLOCAL
+#define THREAD_LOCAL
 #define CFLOW
-#define FORCEINLINE
+#define FORCE_INLINE
 
 // Force inlining attributes
-#ifdef FORCEINLINE
+#ifdef FORCE_INLINE
     #if defined(_MSC_VER)
         #define INLINE __forceinline // Visual C++
-        #else
-        #define INLINE __attribute__((always_inline)) inline // GCC/G++/CLANG
-        #endif
     #else
-        #define INLINE
+        #define INLINE __attribute__((always_inline)) inline // GCC/G++/CLANG
+    #endif
+#else
+    #define INLINE
 #endif
 
 // __TIME__ && __COUNTER__ both used as a random provider (compile-time)
@@ -36,10 +36,10 @@
 #define OBF_NORMAL(x) OBF_KEY_NORMAL(x, obf::clean_type<decltype(obf::gettype(x))>, obf::getsize(x), (char)RND(1, 255))
 #define OBF_THREADLOCAL(x) OBF_KEY_THREADLOCAL(x, obf::clean_type<decltype(obf::gettype(x))>, obf::getsize(x), (char)RND(1, 255))
 
-#ifdef THREADLOCAL
-#define OBF(x) (std::decay_t<decltype(x)>) OBF_THREADLOCAL(x)
+#ifdef THREAD_LOCAL
+    #define OBF(x) (std::decay_t<decltype(x)>) OBF_THREADLOCAL(x)
 #else
-#define OBF(x) (std::decay_t<decltype(x)>) OBF_NORMAL(x)
+    #define OBF(x) (std::decay_t<decltype(x)>) OBF_NORMAL(x)
 #endif
 
 // Call hidding is different on windows and linux (symbol-based)
@@ -69,13 +69,13 @@ namespace obf {
     constexpr size_t getsize(T) { return 1; }
     
     template<typename T, size_t size>
-	constexpr static T gettype(const T(&)[size]);
+    constexpr static T gettype(const T(&)[size]);
 
-	template<typename T>
-	constexpr static T gettype(T);
+    template<typename T>
+    constexpr static T gettype(T);
     
-    template <class T, int size>
-    using determine = typename std::conditional<true, std::remove_all_extents_t<T>, std::remove_all_extents_t<T>>::type;
+    template <class T>
+    using determine = typename std::conditional<std::is_array<T>::value || std::is_pointer<T>::value, std::remove_all_extents_t<T>, T>::type;
     
     // Pretty basic cflow to fuck up IDA
     template <class T>

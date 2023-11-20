@@ -35,7 +35,7 @@ You can encrypt strings and any xor-able decimals easily. The macro is universal
 #include "obfusheader.h"
 
 int main() {
-	printf(OBF("%s, %d, %c"), OBF("TEST"), OBF(123), OBF('c'));
+    printf(OBF("%s, %d, %c"), OBF("TEST"), OBF(123), OBF('c'));
     return 0;
 }
 ```
@@ -92,7 +92,7 @@ There already are some similar solutions for compile-time obfuscation, but all o
 
 1. [Oxorany](https://github.com/llxiaoyuan/oxorany)
 
-	Seems like a really good compile-time obfuscator, has an universal macro with input type detection and control flow implementation. But sadly is affected by optimization flags in general. 
+    Seems like a really good compile-time obfuscator, has an universal macro with input type detection and control flow implementation. But sadly is affected by optimization flags in general. 
     
 Test C++ source:
 <div align=center>
@@ -120,7 +120,7 @@ When compiling with -O3 the string is encrypted, but the control flow gets eaten
 
 2. [skCrypter](https://github.com/skadro-official/skCrypter)
 
-	Another one more old compile-time obfuscation header. Works pretty fine without any compiler flags, but the encryption gets completely simplified if optimization flag is added.
+    Another one more old compile-time obfuscation header. Works pretty fine without any compiler flags, but the encryption gets completely simplified if optimization flag is added.
 
 Test C++ program:
 <div align=center>
