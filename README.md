@@ -1,6 +1,7 @@
 # Obfusheader.h
-
+<div align=center style="background-color: transparent;">
 <img src="https://i.ibb.co/sQQDTjn/preview.png"></img>
+</div>
 
 Obfusheader.h is a portable header file for C++14 and higher which implements multiple features for compile-time obfuscation such example string & decimal encryption, control flow, call hiding. It has no external dependencies, works on both windows and unix platforms, supports g++, gcc and visual c++ compilers. Obfusheader.h is intended to be the most easy way to provide a basic protection for sensitive data in your binaries. It's also designed to work with any g++ arguments which affect the compilation (-O3, Os, -fPIC, etc).
 
