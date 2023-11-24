@@ -1,12 +1,11 @@
 #pragma once
-#include <type_traits>
 
-// Settings 
+// Settings (Just comment out whatever you need)
 #define THREAD_LOCAL
 #define CFLOW
 #define FORCE_INLINE
 
-// Force inlining attributes
+// Without forceinline the compiler will mostly ignore inline methods
 #ifdef FORCE_INLINE
     #if defined(_MSC_VER)
         #define INLINE __forceinline // Visual C++
@@ -14,7 +13,7 @@
         #define INLINE __attribute__((always_inline)) inline // GCC/G++/CLANG
     #endif
 #else
-    #define INLINE
+    #define INLINE inline // Regular inline doesn't always inline
 #endif
 
 // __TIME__ && __COUNTER__ both used as a random provider (compile-time)
@@ -37,9 +36,9 @@
 #define OBF_THREADLOCAL(x) OBF_KEY_THREADLOCAL(x, obf::clean_type<decltype(obf::gettype(x))>, obf::getsize(x), (char)RND(1, 255))
 
 #ifdef THREAD_LOCAL
-    #define OBF(x) (std::decay_t<decltype(x)>) OBF_THREADLOCAL(x)
+    #define OBF(x) (meta::decay_t<decltype(x)>) OBF_THREADLOCAL(x)
 #else
-    #define OBF(x) (std::decay_t<decltype(x)>) OBF_NORMAL(x)
+    #define OBF(x) (meta::decay_t<decltype(x)>) OBF_NORMAL(x)
 #endif
 
 // Call hidding is different on windows and linux (symbol-based)
@@ -51,10 +50,172 @@
     #define OBFUSCALL(lib, mtd, def) ((def)(GetProcAddress(LoadLibrary(OBF(lib)), OBF(mtd))))
 #endif
 
+// This was created so the header works without type_traits (on gcc and other compilers)
+// It basically replicates type_traits, it might look scary just skip it
+namespace meta {
+    
+    template<class T, T v>
+    struct integral_constant {
+        static constexpr T value = v;
+        using value_type = T;
+        using type = integral_constant; // using injected-class-name
+        constexpr operator value_type() const noexcept { return value; }
+        constexpr value_type operator()() const noexcept { return value; } // since c++14
+    };
+    
+    typedef integral_constant<bool,false> false_type;
+    typedef integral_constant<bool,true> true_type;
+    
+    // primary template
+    template<class>
+    struct is_function : false_type {};
+    
+    // specialization for regular functions
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...)> : true_type {};
+    
+    // specialization for variadic functions such as std::printf
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...,...)> : true_type {};
+    
+    // specialization for function types that have cv-qualifiers
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...) const> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...) volatile> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...) const volatile> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...,...) const> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...,...) volatile> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...,...) const volatile> : true_type {};
+    
+    // specialization for function types that have ref-qualifiers
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...) &> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...) const &> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...) volatile &> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...) const volatile &> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...,...) &> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...,...) const &> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...,...) volatile &> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...,...) const volatile &> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...) &&> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...) const &&> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...) volatile &&> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...) const volatile &&> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...,...) &&> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...,...) const &&> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...,...) volatile &&> : true_type {};
+    template<class Ret, class... Args>
+    struct is_function<Ret(Args...,...) const volatile &&> : true_type {};
+    
+    template<class T>
+    struct is_array : false_type {};
+    template<class T>
+    struct is_array<T[]> : true_type {};
+    template<class T, size_t N>
+    struct is_array<T[N]> : true_type {};
+    
+    template<class T>
+    struct remove_extent { using type = T; };
+    template<class T>
+    struct remove_extent<T[]> { using type = T; };
+    template<class T, size_t N>
+    struct remove_extent<T[N]> { using type = T; };
+    
+    template<class T> struct remove_reference { typedef T type; };
+    template<class T> struct remove_reference<T&> { typedef T type; };
+    template<class T> struct remove_reference<T&&> { typedef T type; };
+    
+    template<class T> struct remove_cv { typedef T type; };
+    template<class T> struct remove_cv<const T> { typedef T type; };
+    template<class T> struct remove_cv<volatile T> { typedef T type; };
+    template<class T> struct remove_cv<const volatile T> { typedef T type; };
+    
+    template<class T> struct remove_const { typedef T type; };
+    template<class T> struct remove_const<const T> { typedef T type; };
+    
+    template<class T> struct remove_volatile { typedef T type; };
+    template<class T> struct remove_volatile<volatile T> { typedef T type; };
+        
+    template<class T>
+    struct remove_all_extents { typedef T type; };
+    template<class T>
+    struct remove_all_extents<T[]> {
+        typedef typename remove_all_extents<T>::type type;
+    };
+    template<class T, size_t N>
+    struct remove_all_extents<T[N]> {
+        typedef typename remove_all_extents<T>::type type;
+    };
+    
+    template<bool B, class T, class F>
+    struct conditional { using type = T; };
+    template<class T, class F>
+    struct conditional<false, T, F> { using type = F; };
+    
+    template<class T>
+    struct type_identity { using type = T; }; // or use std::type_identity (since C++20)
+    template<class T>
+    auto try_add_pointer(int) -> type_identity<typename remove_reference<T>::type*>;  // usual case
+    template<class T>
+    auto try_add_pointer(...) -> type_identity<T>;  // unusual case (cannot form std::remove_reference<T>::type*)
+    template<class T>
+    struct add_pointer : decltype(try_add_pointer<T>(0)) {};
+    
+    // Helpers from C++14 
+    template<class T>
+    using remove_cv_t = typename remove_cv<T>::type;
+    template<class T>
+    using remove_const_t = typename remove_const<T>::type;
+    template<class T>
+    using remove_volatile_t = typename remove_volatile<T>::type;
+    template<class T>
+    using remove_reference_t = typename remove_reference<T>::type;
+    template<class T>
+    using remove_all_extents_t = typename remove_all_extents<T>::type;
+
+    template<class T>
+    struct decay {
+    private:
+        typedef typename remove_reference<T>::type U;
+    public:
+        typedef typename conditional<
+            is_array<U>::value,
+            typename add_pointer<typename remove_extent<U>::type>::type,
+            typename conditional<
+                is_function<U>::value,
+                typename add_pointer<U>::type,
+                typename remove_cv<U>::type
+           >::type
+       >::type type;
+    };
+    
+    template<class T>
+    using decay_t = typename decay<T>::type;
+}
+
 namespace obf {
     
     template <class _Ty>
-    using clean_type = typename std::remove_const_t<std::remove_reference_t<_Ty>>;
+    using clean_type = typename meta::remove_const_t<meta::remove_reference_t<_Ty>>;
     
     template <typename T, T value>
     static T ensure_threadlocal() { thread_local T v = value; return v; }
@@ -73,9 +234,6 @@ namespace obf {
 
     template<typename T>
     constexpr static T gettype(T);
-    
-    template <class T>
-    using determine = typename std::conditional<std::is_array<T>::value || std::is_pointer<T>::value, std::remove_all_extents_t<T>, T>::type;
     
     // Pretty basic cflow to fuck up IDA
     template <class T>
@@ -119,7 +277,7 @@ namespace obf {
     class obfuscator {
     public: 
         INLINE constexpr obfuscator(const T * data) {
-            for (int i = 0; i < size; i++)
+            for (int i = 0; i <size; i++)
                 m_data[i] = data[i] ^ (key + i);
         }
         
@@ -129,7 +287,7 @@ namespace obf {
 
         INLINE T * decrypt() {
             if (!decrypted) {
-                for (int i = 0; i < size; i++) {
+                for (int i = 0; i <size; i++) {
                     m_data[i] = obf_xor<T>(m_data[i], (key + i), &stack, &value, &result);
                 }
             }
@@ -156,13 +314,13 @@ namespace obf {
     class decryptor {
     public:
         INLINE decryptor(const obfuscator<T, size, key> data) {
-            for (int i = 0; i < size; i++)
+            for (int i = 0; i <size; i++)
                 m_data[i] = data.m_data[i];
         }
         
         INLINE T * decrypt() {
             if (!decrypted) {
-                for (int i = 0; i < size; i++) {
+                for (int i = 0; i <size; i++) {
                     m_data[i] = obf_xor<T>(m_data[i], (key + i), &stack, &value, &result);
                 }
             }

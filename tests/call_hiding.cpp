@@ -5,7 +5,7 @@ int main() {
     HANDLE stdOut = OBFUSCALL("kernel32.dll", "GetStdHandle", HANDLE(*)(DWORD))(STD_OUTPUT_HANDLE);
     if (stdOut != NULL && stdOut != INVALID_HANDLE_VALUE) {
         DWORD written = 0;
-        const char * message = OBF("12345");
+        const char * message = OBF("Test string\n");
         OBFUSCALL("kernel32.dll", "WriteConsoleA", HANDLE(*)(HANDLE, const char*, DWORD, LPDWORD, LPVOID))
                  (stdOut, message, strlen(message), &written, NULL);
     }
