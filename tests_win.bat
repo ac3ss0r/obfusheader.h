@@ -1,16 +1,18 @@
 @echo off
 echo Running tests...
-call :build_and_run "gcc", "./tests/output.cpp"
-call :build_and_run "g++", "./tests/output.cpp"
-call :build_and_run "gcc", "./tests/call_hiding.cpp"
-call :build_and_run "g++", "./tests/call_hiding.cpp"
+call :run_test "./tests/output.cpp"
+call :run_test "./tests/call_hiding.cpp"
 pause
 exit
 
-:build_and_run
-echo Building %~2 with %~1...
-%~1 %~2 -O3 -fPIC -march=native -o test_current.exe
-echo Executing %~2...
-test_current
+:run_test
+echo Building %~1 with gcc...
+gcc %~1 -O3 -fPIC -march=native -o "test_current.exe"
+echo Executing...
+"test_current"
+echo Building %~1 with g++...
+g++ %~1 -O3 -fPIC -march=native -o "test_current.exe"
+echo Executing...
+"test_current"
 del test_current.exe
 goto:eof

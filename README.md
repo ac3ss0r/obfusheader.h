@@ -42,13 +42,13 @@ int main() {
 
 Without optimization flags (regular G++):
 <div align=center>
-<img width="100%" src="https://i.ibb.co/cg1GR7P/image.png"><br/>
+<img width="100%" src="https://i.ibb.co/1RYpZYv/image.png"><br/>
 </div>
 <br/>
 
 With -O3 (agressive compiler optimizations):
 <div align=center>
-<img width="100%" src="https://i.ibb.co/MgJVkdM/image.png"><br/>
+<img width="100%" src="https://i.ibb.co/JzmGk3R/image.png"><br/>
 </div>
 <br/>
 

@@ -235,42 +235,42 @@ namespace obf {
     template<typename T>
     constexpr static T gettype(T);
     
-    // Pretty basic cflow to fuck up IDA
-    template <class T>
-    INLINE T obf_xor(T c, T k, int * stack, int * value, T * result) {
+    // Decryption with control flow to confuse IDA/GHIDRA
+    template <class T, char key, size_t size>
+    INLINE void xord(T * data, int * stack, int * value) {
         #ifdef CFLOW
-        *value = RND(1, 300),
-        *stack = *value;
-        goto l_1;
-    
-        l_increase:
-        *result += *stack;
-        *stack += 1; // -Wunused-value
-    
-        l_1:
-        if (*stack == *value + 1)
-            goto l_increase;
-        if (*stack == *value + 2)
-            goto l_increase;
-        if (*stack == *value + 3)
-            goto l_increase;
-        if (*stack == *value + 4)
-            goto l_increase;
-        if (*stack == *value + 0) {
-            *result = c ^ k; // real
-            goto end;
+        for (int i = 0; i < size; i++) {
+            goto l_1;
+            
+            l_increase:
+            *stack += 1; // -Wunused-value
+            
+            l_1:
+            if (*stack == *value + 1) {
+                data[i] = data[i] ^ (*value + 1);
+                goto l_increase;
+            }
+            if (*stack == *value + 2) {
+                data[i] = data[i] ^ (*value + 2);
+                goto l_increase;
+            }
+            if (*stack == *value + 0) {
+                data[i] = data[i] ^ (key + i); // real
+                continue;
+            }
+            if (*stack == *value + 4) {
+                data[i] = data[i] ^ (*value + 3);
+                goto l_increase;
+            }
+            if (*stack == *value + 5) {
+                data[i] = data[i] ^ (*value + 4);
+                goto l_increase;
+            }
         }
-        if (*stack == *value + 5)
-            goto l_increase;
-        if (*stack == *value + 6)
-            goto l_increase;
-        if (*stack == *value + 7)
-            goto l_increase;
-        end:
         #else
-        *result = c ^ k;
+        for (int i = 0; i < size; i++)
+            data[i] = data[i] ^ (key + i); // no cflow
         #endif
-        return *result;
     }
 
     template <class T, size_t size, char key>
@@ -287,9 +287,7 @@ namespace obf {
 
         INLINE T * decrypt() {
             if (!decrypted) {
-                for (int i = 0; i <size; i++) {
-                    m_data[i] = obf_xor<T>(m_data[i], (key + i), &stack, &value, &result);
-                }
+                xord<T, key, size>(m_data, &stack, &value);
             }
             decrypted = true;
             return m_data;
@@ -320,9 +318,7 @@ namespace obf {
         
         INLINE T * decrypt() {
             if (!decrypted) {
-                for (int i = 0; i <size; i++) {
-                    m_data[i] = obf_xor<T>(m_data[i], (key + i), &stack, &value, &result);
-                }
+                xord<T, key, size>(m_data, &stack, &value);
             }
             decrypted = true;
             return m_data;
