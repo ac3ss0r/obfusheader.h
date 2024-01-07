@@ -1,4 +1,4 @@
-.# Obfusheader.h
+# Obfusheader.h
 <div align=center style="background-color: transparent;">
 <img src="https://i.ibb.co/sQQDTjn/preview.png"></img>
 </div>
