@@ -15,74 +15,142 @@ Unlike Windows x86_64 with VMProtect, Themida and other tools, on some platforms
 - Constant encryption (strings, any xor-able decimal types)
 - 2 encryption modes (with thread-local storage and without)
 - Basic inline ControlFlow (messes up with IDA / GHIDRA decompilers)
-- Call hiding for both windows & linux (dlsym & GetModuleHandle)
+- Import hiding for both windows & linux (dlsym & GetModuleHandle)
 - Dynamic key generation in compile-time (\_\_TIME\_\_ and \_\_COUNTER\_\_)
+- Indirect branching (call hiding) using static & dynamic storagers
+- Binary watermarking for IDA/GHIDRA decompilers
 
 ## Usage
 
 ### Settings
-You can change them in the start of the header. This will affect how to obfuscation works in different ways. The default settings are the best so you won't need to change anything for it to work unless it's a special case. Note that disabling THREAD_LOCAL mode will expose your constant while compiling with optimization flags such as -O3, O2 so don't disable it if you use them.
+You can change them in the start of the header. This will affect how to obfuscation works in different ways. The default settings are the best so you won't need to change anything for it to work unless it's a special case. Note that disabling **THREAD_LOCAL** mode will expose your constant while compiling with optimization flags such as -O3, O2 so don't disable it if you use them. You can disable **CFLOW** (control flow) if you prefer optimization over security. You can also disable **FORCE_INLINE** which is not recommended.
+
 ```c++
-// Settings 
-#define THREAD_LOCAL
-#define CFLOW
-#define FORCE_INLINE
+// Obfusheader settings
+#define ENCRYPT_MODE THREADLOCAL // THREADLOCAL/NORMAL
+#define CALL_HIDE_MODE STATIC // STATIC/DYNAMIC
+#define FORCE_INLINE 1
+#define CFLOW 1
 ```
+
 ### Basic constants encryption.
 You can encrypt strings and any xor-able decimals easily. The macro is universal - it accepts any supported type as an argument.
 ```c++
-#include <stdio.h>
-#include "obfusheader.h"
+// Constant encryption
+printf("char*: %s\n" 
+       "int: %d\n"
+       "long long: %llu\n" 
+       "hexval: 0x%x\n",
+       OBF("test"), OBF(123),
+       OBF(9223372036854775807),
+       OBF(0x123));
+```
+The logic of the program will not be affected.
+<div align=center>
+<img width="100%" src="https://github.com/ac3ss0r/obfusheader.h/blob/main/images/const_encryption_output.png?raw=true"><br/>
+</div>
+And this is how it looks in IDA decompiler.
+<div align=center>
+<img width="100%" src="https://github.com/ac3ss0r/obfusheader.h/blob/main/images/const_encryption_ida.png?raw=true"><br/>
+</div>
+<br/>
 
-int main() {
-    printf(OBF("%s, %d, %c"), OBF("TEST"), OBF(123), OBF('c'));
-    return 0;
-}
+### Binary watermarking
+You can leave messages and ASCII arts in your binary which will not affect execution, but will be displayed in IDA/GHIDRA decompilers. To do that use the **WATERMARK** macro. This doesn't affect execution in any way - the feature is purely visual, just to mess with the crackers or leave some kind of message in the binary. It's made in special was so it won't be optimized away with any compiler flags/optimizations.
+
+```c++
+// Watermarking for IDA/Ghidra
+    WATERMARK("                                                           ",
+              "                   00                 00                   ",
+              "                   00000           0000                    ",
+              "                  0    000      0000    0                  ",
+              "                000       000 0000       0 0               ",
+              "              00  0000    000000      000  00              ",
+              "             0000000 000  0 000 0   00 00 0 00             ",
+              "            0 0 0 0 0 00  00000000   000 000000            ",
+              "           0 0 0 0 0     00  00 00  0 00 0 0 0 0           ",
+              "          0 0 0 0 0 0 00 000   0 000  0 0       0          ",
+              "          0 0 0 0  0 0  0 00000 000  0 0 0 0 0000          ",
+              "         0 0   0        0 0 000 0 0            0 0         ",
+              "        0 0 0           0 0000000 0             0 0        ",
+              "       0              00000000 000000            0 0       ",
+              "                      0 00000000000 0     00               ",
+              "                0    0    0 000 0    0  0 0                ",
+              "                          00000000                         ",
+              "                         000000000                         ",
+              "                         000000000                         ",
+              "                           000                             ",
+              "                                                           ");
 ```
 
-Without optimization flags (regular G++):
+This is how it looks in IDA decompiler (G++/CLANG).
 <div align=center>
-<img width="100%" src="https://i.ibb.co/1RYpZYv/image.png"><br/>
+<img width="100%" src="https://github.com/ac3ss0r/obfusheader.h/blob/main/images/watermark_ida_a.png?raw=true"><br/>
+</div>
+<div align=center>
+<img width="100%" src="https://github.com/ac3ss0r/obfusheader.h/blob/main/images/watermark_ida_b.png?raw=true"><br/>
+</div>
+Using Visual C++ it looks a little bit different.
+<div align=center>
+<img width="100%" src="https://github.com/ac3ss0r/obfusheader.h/blob/main/images/watermark_ida_c.png?raw=true"><br/>
 </div>
 <br/>
 
-With -O3 (agressive compiler optimizations):
+### Indirect branching (call hiding)
+Obfusheader allows you to hide calls to any internal methods in the program. To do that you can use one of two existing macros - **STATIC_HIDE_CALL** and **DYNAMIC_HIDE_CALL**. The difference is that static call hiding stores pointer references directly in the .data section, and dynamic initialized them directly in runtime.
+
+```c++
+// Indirect branching (call hiding)
+CALL(&printf, "Very secure default call\n");
+STATIC_HIDE_CALL(&printf, "Very secure static call\n");
+DYNAMIC_HIDE_CALL(&printf, "Very secure dynamic call\n");
+```
+
+This is how it looks in IDA.
 <div align=center>
-<img width="100%" src="https://i.ibb.co/JzmGk3R/image.png"><br/>
+<img width="100%" src="https://github.com/ac3ss0r/obfusheader.h/blob/main/images/static_call_hider_ida.png?raw=true"><br/>
+</div>
+<div align=center>
+<img width="100%" src="https://github.com/ac3ss0r/obfusheader.h/blob/main/images/dynamic_call_hider_ida.png?raw=true"><br/>
 </div>
 <br/>
 
-### Hiding calls
+
+### Import hiding
 You can hide any calls exported from external libraries on both linux and windows.
 
 Windows call hiding example:
 ```c++
-#include <stdio.h>
-#include "obfusheader.h"
-
-int main() {
-    HANDLE stdOut = OBFUSCALL("kernel32.dll", "GetStdHandle", HANDLE(*)(DWORD))(STD_OUTPUT_HANDLE);
-    if (stdOut != NULL && stdOut != INVALID_HANDLE_VALUE) {
-        DWORD written = 0;
-        const char * message = OBF("Hello, world!");
-        OBFUSCALL("kernel32.dll", "WriteConsoleA", HANDLE(*)(HANDLE, const char*, DWORD, LPDWORD, LPVOID))
-                 (stdOut, message, strlen(message), &written, NULL);
-        getchar();
-        return 0;
-    }
-} 
+ // Hiding import calls on windows
+ HANDLE stdOut = CALL_EXPORT("kernel32.dll", "GetStdHandle", HANDLE(*)(DWORD))(STD_OUTPUT_HANDLE);
+ if (stdOut != NULL && stdOut != INVALID_HANDLE_VALUE) {
+     DWORD written = 0;
+     const char* message = OBF("Very secure call\n");
+     CALL_EXPORT("kernel32.dll", "WriteConsoleA", HANDLE(*)(HANDLE, const char*, DWORD, LPDWORD, LPVOID))
+         (stdOut, message, strlen(message), &written, NULL);
+}
 ```
-
-
+<div align=center>
+<img width="100%" src="https://github.com/ac3ss0r/obfusheader.h/blob/main/images/hide_imports.png?raw=true"/><br/>
+</div>
+<br/>
 Linux call hiding example:
 
 ```c++
-#include <stdio.h>
-#include "obfusheader.h"
+// Hiding import calls on unix
+OBFUSCALL("printf", int(*)(const char*...))(OBF("Even more secure call"));
+```
 
-int main() {
-   OBFUSCALL("printf", int(*)(const char*...))(OBF("There's no call here %d%% for sure"), OBF(100));
-   return 0;
+### Additional features
+
+Obfusheader uses a few unique macroses which can be used in your programs. **RND(min, max)** can be used to generate decimals in compiletime. 
+```c++
+printf("Some random value: %d\n", RND(0, 10));
+```
+**INLINE** can be used to forcefully inline any method.
+```c++
+INLINE void do_something() {
+	// the method will be fully inlined
 }
 ```
 
