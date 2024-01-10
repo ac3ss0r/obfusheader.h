@@ -1,18 +1,28 @@
 #pragma once
 
-#define DYNAMIC (0)
-#define STATIC (1)
-#define THREADLOCAL (0)
-#define NORMAL (1)
-
 // Obfusheader settings
-#define ENCRYPT_MODE THREADLOCAL // THREADLOCAL/NORMAL
-#define CALL_HIDE_MODE STATIC // STATIC/DYNAMIC
-#define FORCE_INLINE 1
-#define CFLOW 1
+
+// Possible values - THREADLOCAL, NORMAL
+// Threadlocal encryption stores the data inside threadlocal space. This can sometimes prevent the compiler from optimizing it away + makes it harder to extract the data
+// Normal encryption mode is more performant and stable but a bit less secure
+#define ENCRYPT_MODE THREADLOCAL
+
+// Possible values - STATIC, DYNAMIC
+// Static call hider stores the function pointers inside a static storager (.data section basically) which is very optimized
+// Dynamic call hider inits function pointer arrays in runtime 
+#define CALL_HIDE_MODE STATIC
+
+// Possible values - true/false
+// Force inline is recommended for better performance and makes it a lot harder to reverse-engineer
+#define FORCE_INLINE true
+
+// Possible values true/false
+// Control flow affect the performance in a negative way (but not very much)
+// It creates garbage flow branches to made the decryption hidden among them
+#define CONTROL_FLOW true
 
 // Without forceinline the compiler will mostly ignore inline methods
-#if FORCE_INLINE == 1
+#if FORCE_INLINE == true
 #if defined(_MSC_VER) && !defined(__clang__) 
 #define INLINE __forceinline // Visual C++
 #else
@@ -261,7 +271,7 @@ namespace obf {
     // Decryption with control flow to confuse IDA/GHIDRA
     template <class T, char key, size_t size>
     INLINE void xord(T* data, int* stack, int* value) {
-#if CFLOW == 1
+#if CONTROL_FLOW == true
         for (int i = 0; i < size; i++) {
             goto l_1;
 
@@ -278,7 +288,7 @@ namespace obf {
                 goto l_increase;
             }
             if (*stack == *value + 0) {
-                data[i] = data[i] ^ (key + i); // real
+                data[i] = data[i] ^ static_cast<T>(key + i); // real
                 continue;
             }
             if (*stack == *value + 4) {
@@ -292,7 +302,7 @@ namespace obf {
         }
 #else
         for (int i = 0; i < size; i++)
-            data[i] = data[i] ^ (key + i); // no cflow (optimized)
+            data[i] = data[i] ^ static_cast<T>(key + i); // no CONTROL_FLOW (optimized)
 #endif
     }
 
@@ -301,7 +311,7 @@ namespace obf {
     public:
         INLINE constexpr obfuscator(const T* data) {
             for (int i = 0; i < size; i++)
-                m_data[i] = data[i] ^ (key + i);
+                m_data[i] = data[i] ^ static_cast<T>(key + i);
         }
 
         INLINE constexpr obfuscator(const T data) {

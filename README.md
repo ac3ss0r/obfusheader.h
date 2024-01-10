@@ -27,10 +27,25 @@ You can change them in the start of the header. This will affect how to obfuscat
 
 ```c++
 // Obfusheader settings
-#define ENCRYPT_MODE THREADLOCAL // THREADLOCAL/NORMAL
-#define CALL_HIDE_MODE STATIC // STATIC/DYNAMIC
-#define FORCE_INLINE 1
-#define CFLOW 1
+
+// Possible values - THREADLOCAL, NORMAL
+// Threadlocal encryption stores the data inside threadlocal space. This can sometimes prevent the compiler from optimizing it away + makes it harder to extract the data
+// Normal encryption mode is more performant and stable but a bit less secure
+#define ENCRYPT_MODE THREADLOCAL
+
+// Possible values - STATIC, DYNAMIC
+// Static call hider stores the function pointers inside a static storager (.data section basically) which is very optimized
+// Dynamic call hider inits function pointer arrays in runtime 
+#define CALL_HIDE_MODE STATIC
+
+// Possible values - true/false
+// Force inline is recommended for better performance and makes it a lot harder to reverse-engineer
+#define FORCE_INLINE true
+
+// Possible values true/false
+// Control flow affect the performance in a negative way (but not very much)
+// It creates garbage flow branches to made the decryption hidden among them
+#define CONTROL_FLOW true
 ```
 
 ### Basic constants encryption.
@@ -60,27 +75,27 @@ You can leave messages and ASCII arts in your binary which will not affect execu
 
 ```c++
 // Watermarking for IDA/Ghidra
-    WATERMARK("                                                           ",
-              "                   00                 00                   ",
-              "                   00000           0000                    ",
-              "                  0    000      0000    0                  ",
-              "                000       000 0000       0 0               ",
-              "              00  0000    000000      000  00              ",
-              "             0000000 000  0 000 0   00 00 0 00             ",
-              "            0 0 0 0 0 00  00000000   000 000000            ",
-              "           0 0 0 0 0     00  00 00  0 00 0 0 0 0           ",
-              "          0 0 0 0 0 0 00 000   0 000  0 0       0          ",
-              "          0 0 0 0  0 0  0 00000 000  0 0 0 0 0000          ",
-              "         0 0   0        0 0 000 0 0            0 0         ",
-              "        0 0 0           0 0000000 0             0 0        ",
-              "       0              00000000 000000            0 0       ",
-              "                      0 00000000000 0     00               ",
-              "                0    0    0 000 0    0  0 0                ",
-              "                          00000000                         ",
-              "                         000000000                         ",
-              "                         000000000                         ",
-              "                           000                             ",
-              "                                                           ");
+WATERMARK("                                                           ",
+          "                   00                 00                   ",
+          "                   00000           0000                    ",
+          "                  0    000      0000    0                  ",
+          "                000       000 0000       0 0               ",
+          "              00  0000    000000      000  00              ",
+          "             0000000 000  0 000 0   00 00 0 00             ",
+          "            0 0 0 0 0 00  00000000   000 000000            ",
+          "           0 0 0 0 0     00  00 00  0 00 0 0 0 0           ",
+          "          0 0 0 0 0 0 00 000   0 000  0 0       0          ",
+          "          0 0 0 0  0 0  0 00000 000  0 0 0 0 0000          ",
+          "         0 0   0        0 0 000 0 0            0 0         ",
+          "        0 0 0           0 0000000 0             0 0        ",
+          "       0              00000000 000000            0 0       ",
+          "                      0 00000000000 0     00               ",
+          "                0    0    0 000 0    0  0 0                ",
+          "                          00000000                         ",
+          "                         000000000                         ",
+          "                         000000000                         ",
+          "                           000                             ",
+          "                                                           ");
 ```
 
 This is how it looks in IDA decompiler (G++/CLANG).
