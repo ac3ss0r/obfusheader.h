@@ -1,4 +1,5 @@
-#pragma once
+#ifndef OBFUSHEADER_H
+#define OBFUSHEADER_H
 
 // Obfusheader settings
 
@@ -81,7 +82,7 @@
 #define WATERMARK(...)\
     const char * data[] = {__VA_ARGS__};\
     for (volatile int i = 0; i < sizeof(data)/sizeof(data[0]); i++)\
-        obf::draw(data[i]);\
+        obf::obf_draw(data[i]);\
 
 // This was created so the header works without type_traits (on gcc and other compilers)
 // It basically replicates type_traits, it might look scary just skip it
@@ -372,9 +373,9 @@ namespace obf {
         T m_data[size]{};
     };
 
-    volatile void draw_orig(const char* param) { } // to avoid crashing we assign a real func
+    volatile void obf_draw_orig(const char* param) { } // to avoid crashing we assign a real func
     typedef volatile void(*draw_ptr) (const char*); // define a draw function
-    volatile draw_ptr draw = reinterpret_cast<volatile void(*)(const char*)>(draw_orig); // assign draw_orig to avoid segfault
+    volatile draw_ptr obf_draw = reinterpret_cast<volatile void(*)(const char*)>(obf_draw_orig); // assign draw_orig to avoid segfault
 
     volatile void main_decoy() {
         // Message for crackers ;)
@@ -460,3 +461,5 @@ namespace obf {
         T storager[5];
     };
 }
+
+#endif
