@@ -1,6 +1,10 @@
 #ifndef OBFUSHEADER_H
 #define OBFUSHEADER_H
 
+// TODO: find a better way to do this
+#define true 1
+#define false 0
+
 // Obfusheader settings
 
 // Possible values - THREADLOCAL, NORMAL
