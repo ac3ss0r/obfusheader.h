@@ -22,6 +22,8 @@ Unlike Windows x86_64 with VMProtect, Themida and other tools, on some platforms
 
 ## Usage
 
+⚠️ Note that obfusheader doesn't use dynamic allocations. All the decryption happens in stack memory and the returned values will be deallocated whenever you leave the scope. If you want to use obfusheader with dynamic allocations then you should manually copy decrypted data from stack memory to dynamic memory using **strncpy** or **memcpy**.
+
 ### Settings
 You can change them in the start of the header. This will affect how to obfuscation works in different ways. The default settings are the best so you won't need to change anything for it to work unless it's a special case. Note that disabling **THREAD_LOCAL** mode will expose your constant while compiling with optimization flags such as -O3, O2 so don't disable it if you use them. You can disable **CFLOW** (control flow) if you prefer optimization over security. You can also disable **FORCE_INLINE** which is not recommended.
 
