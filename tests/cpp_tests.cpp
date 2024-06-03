@@ -31,15 +31,13 @@ NOINLINE int get_int(int param) {
 extern "C" {
 
     EXPORT void crackme_graph_test() {
-        char password[20];
-        char * correctPassword = (char*) OBF("test");
+        char password[32];
         printf(OBF("Enter the password: "));
-        scanf(OBF("%s"), password);
-        if (inline_strcmp(password, correctPassword) == OBF(0)) {
+        scanf(OBF("%s"), password); // ah yes, safety
+        if (inline_strcmp(password, OBF("secret")) == OBF(0))
             printf(OBF("Congratulations! You have successfully cracked the program.\n"));
-        } else {
+        else
             printf(OBF("Sorry, the password is incorrect. Try again!\n"));
-        }
     }
 
     EXPORT void const_encryption_test() {
@@ -86,26 +84,16 @@ extern "C" {
         INDIRECT_BRANCH;
         WATERMARK("If you see this in the decompiler that means you have unsupported arch compiler or platform.");
     }
-
-    /*
-    EXPORT void vm_operations_test() {
-        CSTD_ASSERT(VM_ADD(2, 3) == 5);
-        CSTD_ASSERT(VM_SUB(5, 3) == 2);
-        CSTD_ASSERT(VM_MUL(4, 5) == 20);
-        CSTD_ASSERT(VM_DIV(10, 2) == 5);
-        CSTD_ASSERT(VM_MOD(10, 3) == 1);
-        CSTD_ASSERT(VM_EQU(5, 5) == 1);
-        CSTD_ASSERT(VM_NEQ(5, 3) == 1);
-        CSTD_ASSERT(VM_GTR(5, 3) == 1);
-        CSTD_ASSERT(VM_LSS(3, 5) == 1);
-        CSTD_ASSERT(VM_LEQ(5, 5) == 1);
-        CSTD_ASSERT(VM_GEQ(5, 3) == 1);
-    }*/
 }
 
 int main() {
     const_encryption_test();
+    indirect_branch_test();
+    watermark_test();
+    call_hiding_test();
+    call_export_test();
     crackme_graph_test();
+
     getchar();
     return 0;
 }

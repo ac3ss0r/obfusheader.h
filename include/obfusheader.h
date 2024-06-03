@@ -526,34 +526,6 @@ namespace obf {
             BLOCK_FALSE(
                 data[i] = data[i] ^ int_proxy(key + 4);
             );
-
-            /* OLD deprecated control flow
-
-             goto l_1;
-             l_increase:
-             *stack += 1; // -Wunused-value
-
-             l_1:
-             if (*stack == *value + 1) {
-                 data[i] = data[i] ^ (*value + 1);
-                 goto l_increase;
-             }
-             if (*stack == *value + 2) {
-                 data[i] = data[i] ^ (*value + 2);
-                 goto l_increase;
-             }
-             if (*stack == *value + 0) {
-                 data[i] = data[i] ^ static_cast<T>(key + i); // real
-                 continue;
-             }
-             if (*stack == *value + 4) {
-                 data[i] = data[i] ^ (*value + 3);
-                 goto l_increase;
-             }
-             if (*stack == *value + 5) {
-                 data[i] = data[i] ^ (*value + 4);
-                 goto l_increase;
-             }*/
         }
         #else
         for (volatile int i = 0; i < size; i++)
