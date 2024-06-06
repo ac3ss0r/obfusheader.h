@@ -7,15 +7,15 @@ Obfusheader.h is a header-only library for C++14 and above, offering features li
 
 ## ℹ️ Project goals
 
+Unlike Windows x86_64 with VMProtect, Themida and other tools, on some platforms there's no good ways to protect your binaries, for example Arm64 / Arm32 android or linux ones. Because of that developing native ARM software (for example gaming mods) becomes a big problem - your product can be easily cracked by anyone. This gave me inspiration to create a handmade compile-time obfuscation using C++ macros, templates and constant expressions to provide basic protection measures for any platform, including android and Arm linux.
+
+## 🛠️ Current features
+
 <div align=center style="background-color: transparent;">
 <img src="images/before_after.png"></img>
 <text>Sample crackme with & without obfusheader.h</text>
 </div>
 <br/>
-
-Unlike Windows x86_64 with VMProtect, Themida and other tools, on some platforms there's no good ways to protect your binaries, for example Arm64 / Arm32 android or linux ones. Because of that developing native ARM software (for example gaming mods) becomes a big problem - your product can be easily cracked by anyone. This gave me inspiration to create a handmade compile-time obfuscation using C++ macros, templates and constant expressions to provide basic protection measures for any platform, including android and Arm linux.
-
-## 🛠️ Current features
 
 ### Obfuscation features
 - Fully compile-time contant encryption (any types, including strings, decimals & chars) with two modes - threadlocal & normal and random key generation in compile-time)
@@ -132,7 +132,7 @@ CALL(&printf, "Very secure call\n");
 <br/>
 
 ### Import hiding
-You can hide any calls exported from external libraries on both linux and windows.
+You can hide any calls exported from external libraries on both linux and windows. (I will port to PEB walking soon enough, stay tuned)
 
 ```c++
  if (CALL_EXPORT("kernel32.dll", "LoadLibraryA", int(*)(const char*), "user32.dll"))
