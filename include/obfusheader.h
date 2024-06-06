@@ -23,64 +23,50 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
     #define CONST_ENCRYPT_MODE          NORMAL // NORMAL & THREADLOCAL
     #define CFLOW_CONST_DECRYPTION      1
     // C & C++ features
-    #define CFLOW_BRANCHING             0 // Enable only if sure
-    #define INDIRECT_BRANCHING          1
+    #define CFLOW_BRANCHING             0
+    #define INDIRECT_BRANCHING          0
     #define FAKE_SIGNATURES             0
-    #define INLINE_STD                  0
+    #define INLINE_STD                  1
+    #define KERNEL_MODE                 0
 #pragma endregion CONFIG
 
 #pragma region OBFUSCATION
 
-// clang is pretending to be other compilers :warning: !!!
-#if defined(_MSC_VER) && !defined(__clang__) && !defined(__llvm__) 
-    #define _MSVC //real visual C++
+// detect compiler type
+#if defined(_MSC_VER) && !defined(__clang__) && !defined(__llvm__) // clang is pretending to be other compilers :warning: !!!
+    #define _MSVC // real visual C++
 #elif defined (__GNUC__) || defined(__clang__) || defined(__llvm__)
     #define _GNUC
 #elif defined(__TINYC__)
     #define _TCC
-#else
-    #define _COMPILER_UNKNOWN
 #endif
-
-// Detect target arch, os & compiler via all existing definitions
-
+// detect arch
 #if defined(i386) || defined(__i386__) || defined(__i386) || defined(_M_IX86)
     #define x86_32
-#elif defined(__x86_64__) || defined(_M_X64)
+#elif defined(__x86_64__) || defined(_M_X64) || defined (x86_64)
     #define x86_64
 #elif defined(__aarch64__) || defined(_M_ARM64)
     #define ARM64
 #elif defined(_M_ARM)
     #define ARM
-#else
-    #define _ARCH_UNKNOWN
 #endif
-
+// detect operating system
 #if defined(_WIN64) || defined(WIN64) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
     #define _WINDOWS
-#elif  defined(__linux__) || defined(__ANDROID__)
-    #define _LINUX // android is linux tbh
+#elif  defined(__linux__) || defined(__ANDROID__) // android is linux tbh
+    #define _LINUX 
 #elif defined(__APPLE__)
     #define _APPLE // stinky
-#else
-    #define _OS_UNKNOWN
 #endif
 
 #ifdef __TINYC__ 
-    #error Obfusheader doesn't support TCC at the moment :broken_heart:
+    #error Obfusheader doesn't support TCC at the moment :broken_heart:. Consider using https://github.com/DosX-dev/obfus.h
 #endif
-#if !defined(OBF_UNSUPPORTED) && !defined(_MSC_VER) && !defined(__clang__)
+#if !defined(OBF_UNSUPPORTED) && !defined(_MSVC) && !defined(_GNUC)
     #error Your compiler most likely isn't supported by obfusheader.h. If you're sure it's supported use #define OBF_UNSUPPORTED.
 #endif
 #ifdef _MSC_VER
     #pragma warning(disable:4996) // womp womp bored karma
-#endif
-
-// for call hiding & drm modules
-#if defined(_WINDOWS)
-    #include <windows.h>
-#elif defined(_LINUX) || defined(_ANDROID)
-    #include <dlfcn.h>  
 #endif
 
 // Without forceinline the compiler will mostly ignore inline methods
@@ -107,8 +93,15 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 #define FAKE_SIG(name, section, sig) \
     SECTION(section) volatile char * name = (char*)sig;
 
+// for call hiding & drm modules
+#if defined(_WINDOWS) && !KERNEL_MODE
+    #include <windows.h>
+#elif defined(_LINUX) || defined(_ANDROID)
+    #include <dlfcn.h>  
+#endif
+
 // Funny. Only makes sense for windows & PE files (Tricks https://github.com/horsicq/Detect-It-Easy)
-#if FAKE_SIGNATURES && defined(_WINDOWS)
+#if FAKE_SIGNATURES && defined(_WINDOWS) && !KERNEL_MODE
     #ifdef _MSC_VER
         #pragma section(".arch")
         #pragma section(".srdata")
@@ -143,11 +136,12 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 #else // for C we cannot base it on __TIME__, since there's no constexpr, or XX:XX:XX will be added to the binary
     #define CTimeSeed ((__COUNTER__ + __LINE__) * 2654435761u)
 #endif
-#define RND(Min, Max) (Min + (CTimeSeed % (Max - Min + 1)))
 
+#define RND(Min, Max) (Min + (CTimeSeed % (Max - Min + 1)))
 #define _RND RND(1, 10)
 #define _TRUE ((((_9 + __7() + ((_RND * __2()) * __0()))) / _8) - _1)
 #define _FALSE ((_3 + __6() + ((_RND * __3()) * _0)) - __9())
+#define XOR(x, y) (x + y - (2 * (x & y)))
 
 // Use stored in static memory essential bytes for hardcoded cflow blocks & expressions
 #if CFLOW_CONST_DECRYPTION || CFLOW_BRANCHING
@@ -209,7 +203,7 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
     volatile INLINE int int_proxy(double val) {
         INDIRECT_BRANCH;
         volatile double a = val * (_7 - (_3 * 2));
-    loc_start:
+        loc_start:
         BLOCK_TRUE(
             BLOCK_FALSE( 
                 for (int i = 0; i < RND(1, 20); i++) {
@@ -226,7 +220,7 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
                         }
                     }
                     return a + i;
-                loc_middle:
+                    loc_middle:
                     if (RND(0, 1)) {
                         goto loc_end;
                     } else {
@@ -237,13 +231,13 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
             );
         goto loc_end;
         );
-    loc_end:
+        loc_end:
         if (_RND) {
             return a * _TRUE;
         } else {
             goto loc_fake;
         }
-    loc_fake:
+        loc_fake:
         return _RND;
     }
 #endif
@@ -256,7 +250,7 @@ volatile draw_ptr obfusheader_watermark_orig = (draw_ptr)obfusheader_watermark_h
 // Binary watermarking for IDA/GHIDRA that bypasses compiler optimizations
 #define WATERMARK(...)\
     const char * data[] = {__VA_ARGS__};\
-    for (volatile int i = 0; i < sizeof(data)/sizeof(data[0]); i++)\
+    for (volatile int i = 0; i <sizeof(data)/sizeof(data[0]); i++)\
         obfusheader_watermark_orig(data[i]);\
 
 volatile void obfusheader_decoy_main() {
@@ -285,25 +279,25 @@ void obfusheader_decoy_10() { obfusheader_decoy_main(); }
 #define false 0
 
 // Normal & threadlocal encryption modes
-#define OBF_KEY_NORMAL(x, type, size, key) []() -> obf::obfuscator<type, size, key> {\
-    constexpr static auto data = obf::obfuscator<type, size, key>(x);\
-    return data;\
-}()
-#define OBF_KEY_THREADLOCAL(x, type, size, key) []() -> obf::decryptor<type, size, key>& {\
+#define OBF_KEY_NORMAL(x, type, size, key) []() {\
+    constexpr static auto result = obf::obfuscator<type, size, key>(x);\
+    return result; }() 
+#define OBF_KEY_THREADLOCAL(x, type, size, key) []() {\
     constexpr static auto data = obf::obfuscator<type, size, key>(x);\
     thread_local auto decryptor = obf::decryptor<type, size, key>(data);\
-    return decryptor;\
-}()
-#define OBF_NORMAL(x) OBF_KEY_NORMAL(x, obf::clean_type<decltype(obf::gettype(x))>, obf::getsize(x), (char)RND(1, 255))
-#define OBF_THREADLOCAL(x) OBF_KEY_THREADLOCAL(x, obf::clean_type<decltype(obf::gettype(x))>, obf::getsize(x), (char)RND(1, 255))
+    return decryptor; }()
+#define MAKEOBF_NORMAL(x) OBF_KEY_NORMAL(x, obf::clean_type<decltype(obf::gettype(x))>, obf::getsize(x), (char)RND(1, 255))
+#define MAKEOBF_THREADLOCAL(x) OBF_KEY_THREADLOCAL(x, obf::clean_type<decltype(obf::gettype(x))>, obf::getsize(x), (char)RND(1, 255))
 
 #if CONST_ENCRYPTION
     #if CONST_ENCRYPT_MODE == NORMAL
-        #define OBF(x) (meta::decay_t<decltype(x)>) OBF_NORMAL(x)
+        #define MAKEOBF(x) MAKEOBF_NORMAL(x)
     #elif CONST_ENCRYPT_MODE == THREADLOCAL
-        #define OBF(x) (meta::decay_t<decltype(x)>) OBF_THREADLOCAL(x)
+        #define MAKEOBF(x) MAKEOBF_THREADLOCAL(x)
     #endif
+    #define OBF(x) ((meta::decay_t<decltype(x)>) MAKEOBF(x))
 #else
+    #define MAKEOBF(x) x
     #define OBF(x) x
 #endif
 
@@ -315,7 +309,7 @@ void obfusheader_decoy_10() { obfusheader_decoy_main(); }
 // Symbol-based call hiding (different for Linux & windows)
 #if defined(__linux__) || defined(__ANDROID__)
     #define CALL_EXPORT(mtd, def, ...) (((def)dlsym(RTLD_DEFAULT, OBF(mtd)))(__VA_ARGS__))
-#elif defined(_WINDOWS)
+#elif defined(_WINDOWS) && !KERNEL_MODE
     #define CALL_EXPORT(lib, mtd, def, ...) (((def)GetProcAddress(GetModuleHandleA(lib), mtd))(__VA_ARGS__))
 #endif
 
@@ -487,10 +481,9 @@ namespace obf {
     using clean_type = typename meta::remove_const_t<meta::remove_reference_t<_Ty>>;
 
     template <typename T, T value>
-    static T ensure_threadlocal() { thread_local T v = value; return v; }
-
-    template <typename T, T value>
-    static constexpr T ensure_constexpr() { return value; }
+    INLINE constexpr T ensure_constexpr() { return value; }
+    
+    #define CONSTEXPR(x) obf::ensure_constexpr<decltype(x), x>()
 
     template<typename T, int size>
     constexpr size_t getsize(const T(&)[size]) { return size; }
@@ -504,27 +497,25 @@ namespace obf {
     template<typename T>
     constexpr static T gettype(T);
 
-    #define XOR(x, y) (x + y - (2 * (x & y)))
-
     // Decryption with control flow to confuse IDA/GHIDRA
     template <class T, char key, size_t size>
     INLINE void xord(T* data) {
         #if CFLOW_CONST_DECRYPTION
         for (int i = 0; i < size; i++) {
             BLOCK_FALSE(
-                data[i] = data[i] ^ int_proxy(key + 1);
+                data[i] = XOR(data[i], int_proxy(key + 1));
             );
             BLOCK_TRUE(
                 BLOCK_FALSE(
-                    data[i] = data[i] ^ int_proxy(key + 2);
+                    data[i] = XOR(data[i], int_proxy(key + 2));
                 );
                 BLOCK_FALSE(
-                    data[i] = data[i] ^ int_proxy(key + 3);
+                    data[i] = XOR(data[i], int_proxy(key + 3));
                 );
                 data[i] = XOR(data[i], static_cast<T>(int_proxy(key + i))); // real
             );
             BLOCK_FALSE(
-                data[i] = data[i] ^ int_proxy(key + 4);
+                data[i] = XOR(data[i], int_proxy(key + 4));
             );
         }
         #else
@@ -536,12 +527,12 @@ namespace obf {
     template <class T, size_t size, char key>
     class obfuscator {
     public:
-        INLINE constexpr obfuscator(const T* data) {
+        constexpr obfuscator(const T* data) {
             for (int i = 0; i < size; i++)
                 m_data[i] = data[i] ^ static_cast<T>(key + i);
         }
 
-        INLINE constexpr obfuscator(const T data) {
+        constexpr obfuscator(const T data) {
             m_data[0] = data ^ key;
         }
 
@@ -561,8 +552,8 @@ namespace obf {
             return decrypt()[0];
         }
 
-        T m_data[size]{};
         bool decrypted = false;
+        T m_data[size]{};
     };
 
     template <class T, size_t size, char key>
@@ -589,9 +580,8 @@ namespace obf {
             return decrypt()[0];
         }
 
-
-        T m_data[size]{};
         bool decrypted = false;
+        T m_data[size]{};
     };
 
     // Hiding function pointers & masking calls. New method. very op
@@ -620,13 +610,13 @@ namespace obf {
 }
 #else // C doesn't support compile-time encryption cause no constexpr sadly :( So we just implement it like this & disable everything
     #define OBF(x) x
-    #define CALL(ptr, ...) (ptr)(__VA_ARGS__)
-    #define HIDE_PTR(ptr) (ptr)
+        #define CALL(ptr, ...) ((ptr)(__VA_ARGS__))
+        #define HIDE_PTR(ptr) (ptr)
     // Symbol - based call hiding(different for Linux& windows)
     #if defined(__linux__) || defined(__ANDROID__)
-    #define CALL_EXPORT(mtd, def) ((def)(dlsym(RTLD_DEFAULT, OBF(mtd))))
+        #define CALL_EXPORT(mtd, def) ((def)(dlsym(RTLD_DEFAULT, OBF(mtd))))
     #elif defined(_WINDOWS)
-    #define CALL_EXPORT(lib, mtd, def) ((def)(GetProcAddress(LoadLibraryA(lib), mtd)))
+        #define CALL_EXPORT(lib, mtd, def) ((def)(GetProcAddress(LoadLibraryA(lib), mtd)))
     #endif
 #endif
 

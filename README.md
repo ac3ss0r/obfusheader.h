@@ -3,18 +3,19 @@
 <img src="images/obfusheader_preview_small.png"></img>
 </div>
 
-Obfusheader.h is a header-only library for C++14 and above, offering features like compile-time obfuscation (string & decimal encryption, control flow, call hiding). It is self-contained, compatible with Windows and Unix, and supports g++, gcc, and Visual C++ compilers on various CPU architectures. This header simplifies adding basic protection to sensitive data in your binaries and supports g++ compilation arguments (-O3, Os, -fPIC, etc).
+Obfusheader.h is a header-only library for C++14 and above, offering features like compile-time obfuscation using metaprogramming (string & decimal encryption, control flow, call hiding). It is self-contained, compatible with Windows and Unix, and supports g++, gcc, and Visual C++ compilers on various CPU architectures. This header simplifies adding basic protection to sensitive data in your binaries and supports g++ compilation arguments (-O3, Os, -fPIC, etc).
 
 ## ℹ️ Project goals
-
-Unlike Windows x86_64 with VMProtect, Themida and other tools, on some platforms there's no good ways to protect your binaries, for example Arm64 / Arm32 android or linux ones. Because of that developing native ARM software (for example gaming mods) becomes a big problem - your product can be easily cracked by anyone. This gave me inspiration to create a handmade compile-time obfuscation using C++ macros, templates and constant expressions to provide basic protection measures for any platform, including android and Arm linux.
-
-## 🛠️ Current features
 
 <div align=center style="background-color: transparent;">
 <img src="images/before_after.png"></img>
 <text>Sample crackme with & without obfusheader.h</text>
 </div>
+<br/>
+
+Unlike Windows x86_64 with VMProtect, Themida and other tools, on some platforms there's no good ways to protect your binaries, for example Arm64 / Arm32 android or linux ones. Because of that developing native ARM software (for example gaming mods) becomes a big problem - your product can be easily cracked by anyone. This gave me inspiration to create a handmade compile-time obfuscation using C++ macros, templates and constant expressions to provide basic protection measures for any platform, including android and Arm linux.
+
+## 🛠️ Current features
 
 ### Obfuscation features
 - Fully compile-time contant encryption (any types, including strings, decimals & chars) with two modes - threadlocal & normal and random key generation in compile-time)
@@ -31,10 +32,8 @@ Unlike Windows x86_64 with VMProtect, Themida and other tools, on some platforms
 
 ## 📑 Usage
 
-⚠️ Note that obfusheader doesn't use dynamic allocations. All the decryption happens in stack memory and the returned values will be deallocated whenever you leave the scope. If you want to use obfusheader with dynamic allocations then you should manually copy decrypted data from stack memory to dynamic memory using **strncpy** or **memcpy**.
-
 ### Settings
-You can change them in the start of the header. This will affect how the obfuscation works in different ways. 
+You can change them in the start of **obfusheader.h**. This will affect how the obfuscation works in different ways. 
 
 ```c++
 #pragma region CONFIG
@@ -43,17 +42,17 @@ You can change them in the start of the header. This will affect how the obfusca
     #define CONST_ENCRYPT_MODE          NORMAL // NORMAL & THREADLOCAL
     #define CFLOW_CONST_DECRYPTION      1
     // C & C++ features
-    #define CFLOW_BRANCHING             1
-    #define INDIRECT_BRANCHING          1
-    #define FAKE_SIGNATURES             1
+    #define CFLOW_BRANCHING             0
+    #define INDIRECT_BRANCHING          0
+    #define FAKE_SIGNATURES             0
     #define INLINE_STD                  1
+    #define KERNEL_MODE                 0
 #pragma endregion CONFIG
 ```
 
 ### Compile-time constant encryption
 You can encrypt strings and any xor-able decimals easily. The macro is universal - it accepts any supported type as an argument.
 ```c++
-// Constant encryption
  printf("char*: %s\n"
         "int (dec): %d\n"
         "long long: %llu\n"
@@ -64,17 +63,32 @@ You can encrypt strings and any xor-able decimals easily. The macro is universal
         OBF(0x123), OBF(true));
 ```
 The logic of the program won't be affected and the original values will be restored during runtime and **never present in the binary**.
+
+⚠️ Note that obfusheader doesn't use dynamic allocations. All the decryption happens in stack memory and the returned values will be deallocated whenever you leave the scope.
+
+```c++
+// Not safe, since the string might get deallocated upon compiling with optimizations
+const char* str = OBF("test");
+printf("1: %s\n", str);
+
+// Safe, since the string is passed directly inside the method and stack memory has 0 chances to get deallocated
+printf("2: %s\n", OBF("test"));
+
+// Safe, since we create the encrypted storager and decrypt the string only when required
+auto obf = MAKEOBF("test");
+printf("3: %s\n", obf.decrypt());
+```
 <div align=center>
 <img width="100%" src="images/const_encryption.png"><br/>
 <text>The logic isn't affected - the data is decrypted in runtime</text>
 </div>
+
 <br/>
 
 ### Binary watermarking
-You can leave messages and ASCII arts in your binary which will not affect execution, but will be displayed in IDA/GHIDRA decompilers. To do that use the **WATERMARK** macro. This doesn't affect execution in any way - the feature is purely visual, just to mess with the crackers or leave some kind of message in the binary. It's made in special was so it won't be optimized away with any compiler flags/optimizations.
+You can leave messages and ASCII arts in your binary which will not affect execution, but will be displayed in IDA/GHIDRA decompilers. To do that use the **WATERMARK** macro. Inspired by <a href="https://github.com/xoreaxeaxeax/REpsych">REpsych</a> and some java obfuscators which also do that.
 
 ```c++
-// Watermarking for IDA/Ghidra
 WATERMARK("                                                           ",
           "                   00                 00                   ",
           "                   00000           0000                    ",
@@ -98,8 +112,8 @@ WATERMARK("                                                           ",
           "                                                           ");
 ```
 <div align=center>
-<img width="100%" src="images/watermarking.png"><br/>
-<text>Watermarking in IDA decompiler</text>
+<img width="100%" src="images/watermark.png"><br/>
+<text>Watermarking in different RE tools</text>
 </div>
 <br/>
 
