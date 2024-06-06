@@ -26,7 +26,7 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
     #define CFLOW_BRANCHING             0
     #define INDIRECT_BRANCHING          0
     #define FAKE_SIGNATURES             0
-    #define INLINE_STD                  1
+    #define INLINE_STD                  0
     #define KERNEL_MODE                 0
 #pragma endregion CONFIG
 
@@ -65,8 +65,9 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 #if !defined(OBF_UNSUPPORTED) && !defined(_MSVC) && !defined(_GNUC)
     #error Your compiler most likely isn't supported by obfusheader.h. If you're sure it's supported use #define OBF_UNSUPPORTED.
 #endif
-#ifdef _MSC_VER
+#ifdef _MSVC
     #pragma warning(disable:4996) // womp womp bored karma
+    #pragma warning(push, 1) // Disable all warns cause we cannot avoid them anyways
 #endif
 
 // Without forceinline the compiler will mostly ignore inline methods
@@ -88,6 +89,16 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
     #define SECTION(x) __declspec(allocate(x))
 #else
     #define SECTION(x) __attribute__((section(x)))
+#endif
+
+#ifdef __cplusplus
+    #define CAST(T, v) static_cast<T>(v)
+    #define RCAST(T, v) reinterpret_cast<T>(v)
+    #define CCAST(T, v) const_cast<T>(v)
+#elif
+    #define CAST(T, v) ((T)(v))
+    #define RCAST(T, v) ((T)(uintptr_t)(v))
+    #define CCAST(T, v) ((T)(uintptr_t)(v))
 #endif
 
 #define FAKE_SIG(name, section, sig) \
@@ -278,6 +289,8 @@ void obfusheader_decoy_10() { obfusheader_decoy_main(); }
 #define true 1
 #define false 0
 
+#define RCAST(t, val) reinterpret_cast<t>(val)
+
 // Normal & threadlocal encryption modes
 #define OBF_KEY_NORMAL(x, type, size, key) []() {\
     constexpr static auto result = obf::obfuscator<type, size, key>(x);\
@@ -308,9 +321,9 @@ void obfusheader_decoy_10() { obfusheader_decoy_main(); }
 
 // Symbol-based call hiding (different for Linux & windows)
 #if defined(__linux__) || defined(__ANDROID__)
-    #define CALL_EXPORT(mtd, def, ...) (((def)dlsym(RTLD_DEFAULT, OBF(mtd)))(__VA_ARGS__))
+    #define CALL_EXPORT(mtd, def, ...) RCAST(def, dlsym(RTLD_DEFAULT, OBF(mtd)))(__VA_ARGS__)
 #elif defined(_WINDOWS) && !KERNEL_MODE
-    #define CALL_EXPORT(lib, mtd, def, ...) (((def)GetProcAddress(GetModuleHandleA(lib), mtd))(__VA_ARGS__))
+    #define CALL_EXPORT(lib, mtd, def, ...) RCAST(def, GetProcAddress(GetModuleHandleA(OBF(lib)), OBF(mtd)))(__VA_ARGS__)
 #endif
 
 // This was created so the header works without type_traits (on gcc and other compilers)
@@ -589,9 +602,9 @@ namespace obf {
     template <typename T, int N, int real_index, T real_value, int index>
     constexpr T select_func() {
         T funcs[N + 1] = {
-            reinterpret_cast<T>(obfusheader_decoy_1), reinterpret_cast<T>((char*)_RND), reinterpret_cast<T>(obfusheader_decoy_2), reinterpret_cast<T>(obfusheader_decoy_3),
-            reinterpret_cast<T>((char*)_RND), reinterpret_cast<T>(0), reinterpret_cast<T>((char*)_RND),
-            reinterpret_cast<T>(obfusheader_decoy_5), reinterpret_cast<T>((char*)_RND), reinterpret_cast<T>((char*)_RND), reinterpret_cast<T>(real_value)
+            RCAST(T, (char*)_RND), RCAST(T, obfusheader_decoy_1), RCAST(T, obfusheader_decoy_2), RCAST(T, obfusheader_decoy_3),
+            RCAST(T, (char*)_RND), RCAST(T, 0), RCAST(T, (char*)_RND),
+            RCAST(T, obfusheader_decoy_5), RCAST(T, (char*)_RND), RCAST(T, (char*)_RND), RCAST(T, real_value)
         };
         if (index == real_index)  // Index of the real func
             return funcs[N];
@@ -728,4 +741,7 @@ namespace obf {
 #endif
 #pragma endregion MODULES
 
+#ifdef _MSVC
+    #pragma warning(pop)
+#endif
 #endif
