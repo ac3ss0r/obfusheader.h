@@ -67,7 +67,7 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 #endif
 #ifdef _MSVC
     #pragma warning(disable:4996) // womp womp bored karma
-    #pragma warning(push, 1) // Disable all warns cause we cannot avoid them anyways
+    //#pragma warning(push, 1) // Disable all warns 
 #endif
 
 // Without forceinline the compiler will mostly ignore inline methods
@@ -108,7 +108,7 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 #if defined(_WINDOWS) && !KERNEL_MODE
     #include <windows.h>
 #elif defined(_LINUX) || defined(_ANDROID)
-    #include <dlfcn.h>  
+    #include <dlfcn.h>
 #endif
 
 // Funny. Only makes sense for windows & PE files (Tricks https://github.com/horsicq/Detect-It-Easy)
@@ -156,12 +156,12 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 
 // Use stored in static memory essential bytes for hardcoded cflow blocks & expressions
 #if CFLOW_CONST_DECRYPTION || CFLOW_BRANCHING
-    volatile char _a = 'a', _b = 'b', _c = 'c', _d = 'd', _e = 'e', _f = 'f', _g = 'g', _h = 'h', _i = 'i', _j = 'j', _k = 'k', _l = 'l', _m = 'm', _n = 'n', _o = 'o', _p = 'p',
-                  _q = 'q', _r = 'r', _s = 's', _t = 't', _u = 'u', _v = 'v', _w = 'w', _x = 'x', _y = 'y', _z = 'z', _S = 'S', _L = 'L', _A = 'A', _I = 'I', _D = 'D', _P = 'P';
-    volatile char _0 = 0, _1 = 1, _2 = 2, _3 = 3, _4 = 4, _5 = 5, _6 = 6, _7 = 7, _8 = 8, _9 = 9;
+    static volatile char _a = 'a', _b = 'b', _c = 'c', _d = 'd', _e = 'e', _f = 'f', _g = 'g', _h = 'h', _i = 'i', _j = 'j', _k = 'k', _l = 'l', _m = 'm', _n = 'n', _o = 'o', _p = 'p',
+                         _q = 'q', _r = 'r', _s = 's', _t = 't', _u = 'u', _v = 'v', _w = 'w', _x = 'x', _y = 'y', _z = 'z', _S = 'S', _L = 'L', _A = 'A', _I = 'I', _D = 'D', _P = 'P';
+    static volatile char _0 = 0, _1 = 1, _2 = 2, _3 = 3, _4 = 4, _5 = 5, _6 = 6, _7 = 7, _8 = 8, _9 = 9;
     // Same trick with NOINLINED functions (proxies)
-    NOINLINE char __0() { return 0; } NOINLINE char __1() { return 1; } NOINLINE char __2() { return 2; } NOINLINE char __3() { return 3; } NOINLINE char __4() { return 4; }
-    NOINLINE char __5() { return 5; } NOINLINE char __6() { return 6; } NOINLINE char __7() { return 7; } NOINLINE char __8() { return 8; } NOINLINE char __9() { return 9; }
+    static NOINLINE char __0() { return 0; } static NOINLINE char __1() { return 1; } static NOINLINE char __2() { return 2; } static NOINLINE char __3() { return 3; } static NOINLINE char __4() { return 4; }
+    static NOINLINE char __5() { return 5; } static NOINLINE char __6() { return 6; } static NOINLINE char __7() { return 7; } static NOINLINE char __8() { return 8; } static NOINLINE char __9() { return 9; }
 #endif
 
 // Easily build hardcoded control-flow protection blocks
@@ -211,7 +211,7 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 
 // Control flow base (will be inlined upon compilation). Includes indirect branching to break decompilers
 #if CFLOW_CONST_DECRYPTION || CFLOW_BRANCHING
-    volatile INLINE int int_proxy(double val) {
+    volatile static INLINE int int_proxy(double val) {
         INDIRECT_BRANCH;
         volatile double a = val * (_7 - (_3 * 2));
         loc_start:
@@ -254,42 +254,39 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 #endif
 
 // Watermarking for IDA/GHIDRA decompilers
-void obfusheader_watermark_hook(const char* param) {} // to avoid crashing we assign a real func
+static void obfusheader_watermark_hook(const char* param) {} // to avoid crashing we assign a real func
 typedef volatile void(*draw_ptr) (const char*); // define a draw function
-volatile draw_ptr obfusheader_watermark_orig = (draw_ptr)obfusheader_watermark_hook; // assign draw_orig to avoid segfault
+static volatile draw_ptr obfusheader_watermark_orig = (draw_ptr)obfusheader_watermark_hook; // assign draw_orig to avoid segfault
 
 // Binary watermarking for IDA/GHIDRA that bypasses compiler optimizations
 #define WATERMARK(...)\
     const char * data[] = {__VA_ARGS__};\
     for (volatile int i = 0; i <sizeof(data)/sizeof(data[0]); i++)\
-        obfusheader_watermark_orig(data[i]);\
+        obfusheader_watermark_orig(data[i]);
 
-volatile void obfusheader_decoy_main() {
-    // Message for crackers ;)
-    WATERMARK("Stop reversing the binary",
+static volatile void obfusheader_decoy_main() {
+    WATERMARK("Stop reversing the binary", // Message for crackers ;)
                 "Reconsider your life choices",
                     "And go touch some grass", 0);
 }
 
 // Fake decoy functions to hide the original one (for call hiding)
-void obfusheader_decoy_1() { obfusheader_decoy_main(); }
-void obfusheader_decoy_2() { obfusheader_decoy_main(); }
-void obfusheader_decoy_3() { obfusheader_decoy_main(); }
-void obfusheader_decoy_4() { obfusheader_decoy_main(); }
-void obfusheader_decoy_5() { obfusheader_decoy_main(); }
-void obfusheader_decoy_6() { obfusheader_decoy_main(); }
-void obfusheader_decoy_7() { obfusheader_decoy_main(); }
-void obfusheader_decoy_8() { obfusheader_decoy_main(); }
-void obfusheader_decoy_9() { obfusheader_decoy_main(); }
-void obfusheader_decoy_10() { obfusheader_decoy_main(); }
+static void obfusheader_decoy_1() { obfusheader_decoy_main(); }
+static void obfusheader_decoy_2() { obfusheader_decoy_main(); }
+static void obfusheader_decoy_3() { obfusheader_decoy_main(); }
+static void obfusheader_decoy_4() { obfusheader_decoy_main(); }
+static void obfusheader_decoy_5() { obfusheader_decoy_main(); }
+static void obfusheader_decoy_6() { obfusheader_decoy_main(); }
+static void obfusheader_decoy_7() { obfusheader_decoy_main(); }
+static void obfusheader_decoy_8() { obfusheader_decoy_main(); }
+static void obfusheader_decoy_9() { obfusheader_decoy_main(); }
+static void obfusheader_decoy_10() { obfusheader_decoy_main(); }
 
 // C++ only features
 #ifdef __cplusplus 
 // C++ doesn't allow xor-ing bools so this is required for proper encryption. If this causes problems then remove and don't encrypt bools!!!
 #define true 1
 #define false 0
-
-#define RCAST(t, val) reinterpret_cast<t>(val)
 
 // Normal & threadlocal encryption modes
 #define OBF_KEY_NORMAL(x, type, size, key) []() {\
@@ -525,7 +522,7 @@ namespace obf {
                 BLOCK_FALSE(
                     data[i] = XOR(data[i], int_proxy(key + 3));
                 );
-                data[i] = XOR(data[i], static_cast<T>(int_proxy(key + i))); // real
+                data[i] = XOR(data[i], CAST(T, int_proxy(key + i))); // real
             );
             BLOCK_FALSE(
                 data[i] = XOR(data[i], int_proxy(key + 4));
@@ -533,7 +530,7 @@ namespace obf {
         }
         #else
         for (volatile int i = 0; i < size; i++)
-            data[i] = data[i] ^ static_cast<T>(key + i); // no cflow (optimized+unsafe)
+            data[i] = data[i] ^ CAST>(key + i); // no cflow (optimized+unsafe)
         #endif
     }
 
@@ -542,7 +539,7 @@ namespace obf {
     public:
         constexpr obfuscator(const T* data) {
             for (int i = 0; i < size; i++)
-                m_data[i] = data[i] ^ static_cast<T>(key + i);
+                m_data[i] = data[i] ^ CAST(T, key + i);
         }
 
         constexpr obfuscator(const T data) {
@@ -655,12 +652,12 @@ namespace obf {
 #pragma region MODULES
 #if INLINE_STD
 
-    INLINE void inline_strcpy(char* dest,
+    static INLINE void inline_strcpy(char* dest,
         const char* src) {
         while ((*dest++ = *src++));
     }
 
-    INLINE unsigned long inline_strtoul(const char* nptr, char** endptr) {
+    static INLINE unsigned long inline_strtoul(const char* nptr, char** endptr) {
         unsigned long result = 0;
         while (*nptr) {
             char c = *nptr++;
@@ -680,13 +677,13 @@ namespace obf {
         return result;
     }
 
-    INLINE size_t inline_strlen(const char* str) {
+    static INLINE size_t inline_strlen(const char* str) {
         const char* s;
         for (s = str; *s; ++s);
         return (s - str);
     }
 
-    INLINE char* inline_strncat(char* dest,
+    static INLINE char* inline_strncat(char* dest,
         const char* src, size_t n) {
         char* p = dest;
         while (*p != 0)
@@ -699,7 +696,7 @@ namespace obf {
         return dest;
     }
 
-    INLINE int inline_strcmp(const char* s1, const char* s2) {
+    static INLINE int inline_strcmp(const char* s1, const char* s2) {
         while (*s1 == *s2++)
             if (*s1++ == 0)
                 return (0);
@@ -707,7 +704,7 @@ namespace obf {
             *(unsigned char*) --s2);
     }
 
-    INLINE int inline_strncmp(const char* s1,
+    static INLINE int inline_strncmp(const char* s1,
         const char* s2, size_t n) {
         unsigned char u1, u2;
         while (n-- > 0) {
@@ -721,7 +718,7 @@ namespace obf {
         return 0;
     }
 
-    INLINE char* inline_strstr(const char* s,
+    static INLINE char* inline_strstr(const char* s,
         const char* find) {
         char c, sc;
         size_t len;
@@ -740,8 +737,7 @@ namespace obf {
 
 #endif
 #pragma endregion MODULES
-
-#ifdef _MSVC
+/*#ifdef _MSVC
     #pragma warning(pop)
-#endif
+#endif */
 #endif
