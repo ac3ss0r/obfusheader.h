@@ -102,7 +102,7 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 #endif
 
 #define FAKE_SIG(name, section, sig) \
-    SECTION(section) volatile char * name = (char*)sig;
+    SECTION(section) volatile static char * name = (char*)sig;
 
 // for call hiding & drm modules
 #if defined(_WINDOWS) && !KERNEL_MODE
@@ -635,8 +635,8 @@ namespace obf {
     #define if(x) if (int_proxy((long long)(x)) * _TRUE && (_RND * _FALSE + _TRUE))
     #define while(x) while(int_proxy((long long)(x)) * _TRUE && _RND + _FALSE)
     #define switch(x) switch(int_proxy((long long)(x)) * _TRUE && _RND + _FALSE)
-    #define for(x) for(x && int_proxy(_FALSE) * _TRUE)
-    #define return for (int _i = 0; _i < RND(1, 100); _i++) return
+    #define for(x) for(int _i=0;_i<=_TRUE;_i++) for (x)
+    #define return for (int _i=0; _i<RND(1, 100);_i++) return
     // This will hurt (Some compilers don't allow this, disable if fails)
     #define else else\
                         BLOCK_FALSE(\
