@@ -1,6 +1,6 @@
 # Obfusheader.h
 <div align=center style="background-color: transparent;">
-<img src="images/obfusheader_preview_small.png"></img>
+    <img src="images/obfusheader_preview_small.png"></img>
 </div>
 
 Obfusheader.h is a header-only library for C++14 and above, offering features like compile-time obfuscation using metaprogramming (string & decimal encryption, control flow, call hiding). It is self-contained, compatible with Windows and Unix, and supports g++, gcc, and Visual C++ compilers on various CPU architectures. This header simplifies adding basic protection to sensitive data in your binaries and supports g++ compilation arguments (-O3, Os, -fPIC, etc).
@@ -12,10 +12,9 @@ Unlike Windows x86_64 with VMProtect, Themida and other tools, on some platforms
 ## 🛠️ Current features
 
 <div align=center style="background-color: transparent;">
-<img src="images/before_after.png"></img>
-<text>Sample crackme with & without obfusheader.h</text>
+    <img src="images/before_after.png"></img>
+    <text>Sample crackme with & without obfusheader.h</text>
 </div>
-<br/>
 
 ### Obfuscation features
 - Fully compile-time contant encryption (any types, including strings, decimals & chars) with two modes - threadlocal & normal and random key generation in compile-time)
@@ -80,10 +79,38 @@ printf("3: %s\n", (char*)obf);
 ```
 
 <div align=center>
-<img width="100%" src="images/const_encryption.png"><br/>
-<text>The logic isn't affected - the data is decrypted in runtime</text>
+    <img width="100%" src="images/const_encryption.png"><br/>
+    <text>The logic isn't affected - the data is decrypted in runtime</text>
 </div>
 
+<br/>
+
+### Call hiding
+Obfusheader allows you to hide calls to any internal methods by generating randomly shuffled function pointer arrays in compiletime and obfuscating the origin index.
+
+```c++
+CALL(&printf, "Very secure call\n");
+```
+
+<div align=center>
+    <img width="100%" src="images/call_hide.jpg"><br/>
+    <text>Call hiding demo</text>
+</div>
+<br/>
+
+### Import hiding
+You can hide any calls exported from external libraries on both linux and windows. (I will port to PEB walking soon enough, stay tuned)
+
+```c++
+ if (CALL_EXPORT("kernel32.dll", "LoadLibraryA", int(*)(const char*), "user32.dll"))
+                    CALL_EXPORT("user32.dll", "MessageBoxA", int(*)(int, const char*, const char*, int), 0, "Real", "Msgbox", 0);
+```
+
+<br/>
+    <div align=center>
+        <img width="100%" src="images/export_hiding.png"><br/>
+        <text>Import hiding demo</text>
+    </div>
 <br/>
 
 ### Binary watermarking
@@ -113,41 +140,24 @@ WATERMARK("                                                           ",
           "                                                           ");
 ```
 <div align=center>
-<img width="100%" src="images/watermark.png"><br/>
-<text>Watermarking in different RE tools</text>
+    <img width="100%" src="images/watermark.png"><br/>
+    <text>Watermarking in different RE tools</text>
 </div>
 <br/>
 
-### Call hiding
-Obfusheader allows you to hide calls to any internal methods by generating randomly shuffled function pointer arrays in compiletime and obfuscating the origin index.
+### Fake signatures
 
-```c++
-CALL(&printf, "Very secure call\n");
-```
+This is a windows-only (currently) feature, allowing to add fake detections to mimic powerful protections. First thing any reverse-engineer does is doing basic analysis on the binary via Detect-It-Easy, PeExeInfo or Nauz File detector. Fake signatures allow to trick crackers into thinking that the software was protected with multiple decent protectors and makes them doubt it's worth the time to reverse it.
 
 <div align=center>
-<img width="100%" src="images/call_hide.jpg"><br/>
-<text>Call hiding demo</text>
-</div>
-<br/>
-
-### Import hiding
-You can hide any calls exported from external libraries on both linux and windows. (I will port to PEB walking soon enough, stay tuned)
-
-```c++
- if (CALL_EXPORT("kernel32.dll", "LoadLibraryA", int(*)(const char*), "user32.dll"))
-                    CALL_EXPORT("user32.dll", "MessageBoxA", int(*)(int, const char*, const char*, int), 0, "Real", "Msgbox", 0);
-```
-
-<br/>
-<div align=center>
-<img width="100%" src="images/export_hiding.png"><br/>
-<text>Import hiding demo</text>
+    <img width="100%" src="images/die-preview.png"><br/>
+    <text>Detect-It-Easy output</text>
 </div>
 <br/>
 
 ### Additional features & modules
-Obfusheader uses a few unique macroses which can be used in your programs. **RND(min, max)** can be used to generate random decimals in compiletime. 
+Obfusheader uses a few unique macroses which can be used in your programs. **RND(min, max)** can be used to generate random decimals in compiletime.
+
 ```c++
 printf("Some random value: %d\n", RND(0, 10));
 ```
