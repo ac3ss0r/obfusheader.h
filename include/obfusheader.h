@@ -23,9 +23,9 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
     #define CONST_ENCRYPT_MODE          NORMAL // NORMAL & THREADLOCAL
     #define CFLOW_CONST_DECRYPTION      1
     // C & C++ features
-    #define CFLOW_BRANCHING             0
+    #define CFLOW_BRANCHING             1
     #define INDIRECT_BRANCHING          0
-    #define FAKE_SIGNATURES             0
+    #define FAKE_SIGNATURES             1
     #define INLINE_STD                  0
     #define KERNEL_MODE                 0
 #pragma endregion CONFIG
@@ -142,7 +142,7 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 
 // __TIME__, __LINE__, __COUNTER__ are used for fully compile-time random
 #ifdef __cplusplus // using constexpr allows us to avoid embeding XX:XX:XX into the binary
-    constexpr int CTime = __TIME__[0] + __TIME__[1] + __TIME__[3] + __TIME__[4] + __TIME__[6] + __TIME__[7];
+    static constexpr int CTime = __TIME__[0] + __TIME__[1] + __TIME__[3] + __TIME__[4] + __TIME__[6] + __TIME__[7];
     #define CTimeSeed ((__COUNTER__ + CTime) * 2654435761u)
 #else // for C we cannot base it on __TIME__, since there's no constexpr, or XX:XX:XX will be added to the binary
     #define CTimeSeed ((__COUNTER__ + __LINE__) * 2654435761u)
@@ -209,47 +209,22 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 // Very funny
 #define SEGFAULT int_proxy(*(int*)RND(0, 0x7FFFFF))
 
-// Control flow base (will be inlined upon compilation). Includes indirect branching to break decompilers
 #if CFLOW_CONST_DECRYPTION || CFLOW_BRANCHING
     volatile static INLINE int int_proxy(double val) {
         INDIRECT_BRANCH;
-        volatile double a = val * (_7 - (_3 * 2));
-        loc_start:
+        volatile double a = val * ((double)_7 - ((double)_3 * 2));
         BLOCK_TRUE(
-            BLOCK_FALSE( 
-                for (int i = 0; i < RND(1, 20); i++) {
-                    if (a + i == __0()) {
-                        a += i & 0;
-                        goto loc_start;
-                    } else if (a + i == __1()) {
-                        a += i & 1;
-                    } else {
-                        if (RND(0, 1)) {
-                            goto loc_fake;
-                        } else {
-                            goto loc_middle;
-                        }
-                    }
-                    return a + i;
-                    loc_middle:
-                    if (RND(0, 1)) {
-                        goto loc_end;
-                    } else {
-                        goto loc_start;
-                    }
-                }
-            goto loc_start;
-            );
-        goto loc_end;
-        );
-        loc_end:
-        if (_RND) {
-            return a * _TRUE;
-        } else {
-            goto loc_fake;
-        }
-        loc_fake:
-        return _RND;
+            BLOCK_FALSE(
+                return _RND;
+            )
+        )
+        BLOCK_TRUE(
+            loc_end:
+            if (_RND)
+                return a * _TRUE;
+            loc_fake:
+                return _RND;
+        )
     }
 #endif
 
@@ -511,10 +486,10 @@ namespace obf {
     template <class T, char key, size_t size>
     INLINE void xord(T* data) {
         #if CFLOW_CONST_DECRYPTION
-        for (int i = 0; i < size; i++) {
+        for (volatile int i = 0; i < size; i++) {
             BLOCK_FALSE(
                 data[i] = XOR(data[i], int_proxy(key + 1));
-            );
+            )
             BLOCK_TRUE(
                 BLOCK_FALSE(
                     data[i] = XOR(data[i], int_proxy(key + 2));
@@ -522,11 +497,13 @@ namespace obf {
                 BLOCK_FALSE(
                     data[i] = XOR(data[i], int_proxy(key + 3));
                 );
-                data[i] = XOR(data[i], CAST(T, int_proxy(key + i))); // real
-            );
+                BLOCK_TRUE(
+                    data[i] = XOR(data[i], CAST(T, int_proxy(key + i))); // real
+                )
+            )
             BLOCK_FALSE(
                 data[i] = XOR(data[i], int_proxy(key + 4));
-            );
+            )
         }
         #else
         for (volatile int i = 0; i < size; i++)
@@ -631,11 +608,11 @@ namespace obf {
 #endif
 
 // Obviously affects performance. Use with caution!
-#if CFLOW_BRANCHING 
-    #define if(x) if (int_proxy((long long)(x)) * _TRUE && (_RND * _FALSE + _TRUE))
-    #define while(x) while(int_proxy((long long)(x)) * _TRUE && _RND + _FALSE)
-    #define switch(x) switch(int_proxy((long long)(x)) * _TRUE && _RND + _FALSE)
-    #define for(x) for(int _i=0;_i<=_TRUE;_i++) for (x)
+#if CFLOW_BRANCHING
+    #define if(x) if (_TRUE) if (int_proxy((long long)(x)) * _TRUE && _RND)
+    #define for(x) for (int _i=0; _i<int_proxy(_TRUE);_i++) for (x)
+    #define while(x) while(int_proxy((long long)(x)) * _TRUE && _RND)
+    #define switch(x) switch(int_proxy((long long)(x)) * _TRUE)
     #define return for (int _i=0; _i<RND(1, 100);_i++) return
     // This will hurt (Some compilers don't allow this, disable if fails)
     #define else else\
