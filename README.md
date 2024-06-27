@@ -151,6 +151,12 @@ This is a windows-only (currently) feature, allowing to add fake detections to m
 </div>
 <br/>
 
+⚠️ If you're using Visual C++ be sure to disable whole program optimization is the project properties. Otherwise the compiler won't create additional sections in the binary. 
+<div align=center>
+    <img width="100%" src="images/vsc-settings.jpg"><br/>
+</div>
+<br/>
+
 ### Additional features & modules
 Obfusheader uses a few unique macroses which can be used in your programs. **RND(min, max)** can be used to generate random decimals in compiletime.
 
