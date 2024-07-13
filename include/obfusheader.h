@@ -95,7 +95,7 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
     #define CAST(T, v) static_cast<T>(v)
     #define RCAST(T, v) reinterpret_cast<T>(v)
     #define CCAST(T, v) const_cast<T>(v)
-#elif
+#else
     #define CAST(T, v) ((T)(v))
     #define RCAST(T, v) ((T)(uintptr_t)(v))
     #define CCAST(T, v) ((T)(uintptr_t)(v))
