@@ -24,22 +24,23 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
     #define CFLOW_CONST_DECRYPTION      1
     // C & C++ features
     #define CFLOW_BRANCHING             1
-    #define INDIRECT_BRANCHING          0
-    #define FAKE_SIGNATURES             1
-    #define INLINE_STD                  1
+    #define INDIRECT_BRANCHING          1
+    #define FAKE_SIGNATURES             0
+    #define INLINE_STD                  0
     #define KERNEL_MODE                 0
 #pragma endregion CONFIG
 
 #pragma region OBFUSCATION
 
 // detect compiler type
-#if defined(_MSC_VER) && !defined(__clang__) && !defined(__llvm__) // clang is pretending to be other compilers :warning: !!!
-    #define _MSVC // real visual C++
+#if defined(_MSC_VER) && !defined(__clang__) && !defined(__llvm__) // Some clang define _MSC_VER for some reason
+    #define _MSVC
 #elif defined (__GNUC__) || defined(__clang__) || defined(__llvm__)
     #define _GNUC
 #elif defined(__TINYC__)
     #define _TCC
 #endif
+
 // detect arch
 #if defined(i386) || defined(__i386__) || defined(__i386) || defined(_M_IX86)
     #define x86_32
@@ -50,6 +51,7 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 #elif defined(_M_ARM)
     #define ARM
 #endif
+
 // detect operating system
 #if defined(_WIN64) || defined(WIN64) || defined(WIN32) || defined(_WIN32) || defined(__WIN32__) || defined(__NT__)
     #define _WINDOWS
@@ -61,36 +63,37 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 
 #ifdef __TINYC__ 
     #error Obfusheader doesn't support TCC at the moment :broken_heart:. Consider using https://github.com/DosX-dev/obfus.h
-#endif
-#if !defined(OBF_UNSUPPORTED) && !defined(_MSVC) && !defined(_GNUC)
+#elif !defined(OBF_UNSUPPORTED) && !defined(_MSVC) && !defined(_GNUC)
     #error Your compiler most likely isn't supported by obfusheader.h. If you're sure it's supported use #define OBF_UNSUPPORTED.
 #endif
+
 #ifdef _MSVC
     #pragma warning(disable:4996) // womp womp bored karma
     //#pragma warning(push, 1) // Disable all warns 
 #endif
 
 // Without forceinline the compiler will mostly ignore inline methods
-#if defined(_MSC_VER)
+#ifdef _MSVC
     #define INLINE __forceinline // Visual C++
 #else
     #define INLINE __attribute__((always_inline)) // GCC/G++/CLANG
 #endif
 
 // Prevents functions from inlining forcefully
-#if defined(_MSC_VER)
+#ifdef _MSVC
     #define NOINLINE __declspec(noinline)
 #else 
     #define NOINLINE __attribute__((noinline))
 #endif
 
 // Create custom sections on both clang & msc++
-#if defined(_MSC_VER)
+#ifdef _MSVC
     #define SECTION(x) __declspec(allocate(x))
 #else
     #define SECTION(x) __attribute__((section(x)))
 #endif
 
+// The casting to support both C and C++
 #ifdef __cplusplus
     #define CAST(T, v) static_cast<T>(v)
     #define RCAST(T, v) reinterpret_cast<T>(v)
@@ -104,7 +107,6 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 #define FAKE_SIG(name, section, sig) \
     SECTION(section) volatile static char * name = (char*)sig;
 
-// for call hiding & drm modules
 #if defined(_WINDOWS) && !KERNEL_MODE
     #include <windows.h>
 #elif defined(_LINUX) || defined(_ANDROID)
@@ -147,8 +149,9 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 #else // for C we cannot base it on __TIME__, since there's no constexpr, or XX:XX:XX will be added to the binary
     #define CTimeSeed ((__COUNTER__ + __LINE__) * 2654435761u)
 #endif
-
 #define RND(Min, Max) (Min + (CTimeSeed % (Max - Min + 1)))
+
+// Pre-defined obfuscated constants
 #define _RND RND(1, 10)
 #define _TRUE ((((_9 + __7() + ((_RND * __2()) * __0()))) / _8) - _1)
 #define _FALSE ((_3 + __6() + ((_RND * __3()) * _0)) - __9())
@@ -206,7 +209,7 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
     #define INDIRECT_BRANCH // nothing
 #endif
 
-// Very funny
+// Segfault on purpose in case something is detected (funny)
 #define SEGFAULT int_proxy(*(int*)RND(0, 0x7FFFFF))
 
 #if CFLOW_CONST_DECRYPTION || CFLOW_BRANCHING

@@ -2,7 +2,7 @@
 #include <string.h>
 #include <assert.h>
 
-#include "obfusheader.h"
+#include "..\include\obfusheader.h"
 
 // C++ tests for https://github.com/obfusheader.h
 
