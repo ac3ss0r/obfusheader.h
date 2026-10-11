@@ -172,6 +172,10 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
 #define BLOCK_TRUE(block) BLOCK_COND(_TRUE, block)
 #define BLOCK_FALSE(block) BLOCK_COND(_FALSE, block)
 
+#ifndef asm
+    #define asm __asm__
+#endif
+
 // This is s a technique allowing to completely break IDA Decompiler
 #if INDIRECT_BRANCHING
     #ifdef x86_32 
@@ -613,7 +617,8 @@ namespace obf {
 // Obviously affects performance. Use with caution!
 #if CFLOW_BRANCHING
     #define if(x) if (_TRUE) if (int_proxy((long long)(x)) * _TRUE && _RND)
-    #define for(x) for (int _i=0; _i<int_proxy(_TRUE);_i++) for (x)
+    // C++11 or later / C99 or later
+    #define for(...) for (int _i = 0; _i < int_proxy(_TRUE); _i++) for (__VA_ARGS__)
     #define while(x) while(int_proxy((long long)(x)) * _TRUE && _RND)
     #define switch(x) switch(int_proxy((long long)(x)) * _TRUE)
     #define return for (int _i=0; _i<RND(1, 100);_i++) return
