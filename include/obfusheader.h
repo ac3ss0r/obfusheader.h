@@ -193,7 +193,7 @@ Visit https://github.com/ac3ss0r/obfusheader.h for configuration tips & more inf
     #endif
     #elif defined(x86_64)
         #ifndef _MSC_VER
-            #define INDIRECT_BRANCH\
+            #define INDIRECT_BRANCH \
                                 asm volatile(\
                                     "xor %%rax, %%rax\n"\
                                     "jz 1f\n"\
