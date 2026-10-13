@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "..\include\obfusheader.h"
+#include "../include/obfusheader.h"
 
 static int failures = 0;
 
@@ -38,6 +38,10 @@ int main(void) {
 
     switch (v) { case 1: out = 10; break; case 2: out = 20; break; default: out = 30; }
     CHECK(out == 20);
+    int sequence = 0;
+    if (++sequence, sequence *= 2, 0.5) CHECK(sequence == 2); else CHECK(0);
+    unsigned long long high = 0xfedcba9876543210ull;
+    switch (high) { case 0xfedcba9876543210ull: CHECK(1); break; default: CHECK(0); }
 
     /* C call hiding degrades to a direct call */
     CHECK(CALL(add, 2, 3) == 5);
