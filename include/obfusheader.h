@@ -376,27 +376,84 @@
     #ifdef __cplusplus
     namespace obf {
 
-        // FNV-1a. Computed at compile time for literals and at run time against the
-        // export tables of the loaded modules, so no API name has to be stored.
+        // Per-build mixing constants.
+        namespace k {
+
+            INLINE constexpr unsigned long long draw(unsigned i) {
+                unsigned long long h = (unsigned long long)OBF_BUILD_SALT * 0xD1B54A32D192ED03ull
+                                     + (unsigned long long)i * 0xA95317C4DEA7883Full;
+                h ^= h >> 31;
+                h *= 0x94D049BB133111EBull;
+                return h ^ (h >> 29);
+            }
+
+            INLINE constexpr unsigned word(unsigned i) { return (unsigned)draw(i); }
+
+            INLINE constexpr unsigned mul32(unsigned i) {
+                return (unsigned)((draw(i) | 0x81800001ull) & 0xFFFDFFFFull);
+            }
+
+            INLINE constexpr unsigned long long mul64(unsigned i) {
+                return (draw(i) | 0x8180000000000001ull) & 0xFFFDFFFFFFFFFFFFull;
+            }
+
+            INLINE constexpr unsigned byte(unsigned i) {
+                return (unsigned)(draw(i) & 0xFFull) | 1u;
+            }
+
+            INLINE constexpr unsigned shr(unsigned i, unsigned lo, unsigned hi) {
+                return lo + (unsigned)(draw(i) % (unsigned long long)(hi - lo + 1));
+            }
+        }
+
+        // Indices into draw(); grouping them here keeps every user of one constant
+        // on the same value, which matters because the compile-time hash and the
+        // run-time hash of a name have to agree or import hiding resolves nothing.
+        #define OBF_K_SEED   1 // hash seed
+        #define OBF_K_MUL    2 // hash step multiplier
+        #define OBF_K_SALT   3 // final salt multiplier
+        #define OBF_K_STRIDE 4 // key schedule index stride
+        #define OBF_K_KA     5 // key schedule mixers
+        #define OBF_K_KB     6
+        #define OBF_K_KC     7
+        #define OBF_K_S1     8 // key schedule shifts
+        #define OBF_K_S2     9
+        #define OBF_K_D1     10 // decoy row mixer
+        #define OBF_K_D2     11
+        #define OBF_K_SLOT   12 // masked slot/index multipliers
+        #define OBF_K_DECOY  13 // call table decoy picker
+
+        // One step of the name hash: multiply-xor over a byte. hash_wide() and
+        // hash_runtime() feed this same function, so the algorithm lives in one place
+        // and its constants are emitted once instead of four times. Named apart from
+        // the vault's own checksum step, which must agree with itself but not with this.
+        INLINE constexpr unsigned hash_feed(unsigned h, unsigned c) {
+            return (h ^ c) * k::mul32(OBF_K_MUL);
+        }
+
+        // Computed at compile time for literals and at run time against the export
+        // tables of the loaded modules, so no API name has to be stored. The shape is
+        // multiply-xor like FNV-1a, the numbers are this build's own.
         INLINE constexpr unsigned hash_fnv(const char* s) {
-            unsigned h = 2166136261u;
+            unsigned h = k::mul32(OBF_K_SEED);
             for (; *s != 0; ++s)
-                h = (h ^ (unsigned)(unsigned char)*s) * 16777619u;
+                h = hash_feed(h, (unsigned)(unsigned char)*s);
             return h;
         }
 
         // Same, case insensitive: module names are compared case insensitively.
         INLINE constexpr unsigned hash_fnv_lower(const char* s) {
-            unsigned h = 2166136261u;
+            unsigned h = k::mul32(OBF_K_SEED);
             for (; *s != 0; ++s) {
                 unsigned c = (unsigned)(unsigned char)*s;
                 if (c >= 'A' && c <= 'Z') c = c + 32u;
-                h = (h ^ c) * 16777619u;
+                h = hash_feed(h, c);
             }
             return h;
         }
 
         // ELF's own hash, needed to index the GNU/SYSV hash tables of a shared object.
+        // This one has to stay exactly as the loader computes it, constants included.
         INLINE constexpr unsigned hash_elf(const char* s) {
             unsigned h = 0u, g = 0u;
             for (; *s != 0; ++s) {
@@ -411,7 +468,7 @@
         }
 
         INLINE constexpr unsigned hash_salt(unsigned h) {
-            return (h ^ OBF_BUILD_SALT) * 2654435761u;
+            return (h ^ OBF_BUILD_SALT) * k::mul32(OBF_K_SALT);
         }
     }
     #define OBF_HASH(s)        obf::hash_salt(obf::hash_fnv(s))
@@ -435,48 +492,49 @@
         #include <intrin.h> // __readgsqword / __readfsdword for the PEB walk, __nop, __debugbreak
     #endif
 
-    // Opaque predicate values. obf_pred_true() is always non zero and
-    // obf_pred_false() always zero, but neither is a visible constant: they are
+    // Opaque predicate values. obf_psel_a() is always non zero and
+    // obf_psel_b() always zero, but neither is a visible constant: they are
     // rebuilt from a volatile pool through noinline helpers, which is what keeps a
     // decompiler from folding the fake branches away.
     //
     // With CFLOW_ASM_JUNK=0 the pool is not used at all and the predicates become
     // plain constants, which is what makes the cflow legal inside constexpr code.
     #if CFLOW_ASM_JUNK
-        // Decoy constants: they look like leftovers of a table, but they are the
-        // operands of the predicates. Never const, so the loads stay.
-        static volatile unsigned char obf_pool_0 = 0, obf_pool_1 = 1, obf_pool_2 = 2, obf_pool_3 = 3, obf_pool_4 = 4,
-                                      obf_pool_5 = 5, obf_pool_6 = 6, obf_pool_7 = 7, obf_pool_8 = 8, obf_pool_9 = 9;
-        static volatile char obf_tag_a = 'a', obf_tag_b = 'b', obf_tag_c = 'c', obf_tag_d = 'd', obf_tag_e = 'e',
-                             obf_tag_f = 'f', obf_tag_g = 'g', obf_tag_h = 'h', obf_tag_i = 'i', obf_tag_j = 'j',
-                             obf_tag_k = 'k', obf_tag_l = 'l', obf_tag_m = 'm', obf_tag_n = 'n', obf_tag_o = 'o',
-                             obf_tag_p = 'p', obf_tag_q = 'q', obf_tag_r = 'r', obf_tag_s = 's', obf_tag_t = 't',
-                             obf_tag_u = 'u', obf_tag_v = 'v', obf_tag_w = 'w', obf_tag_x = 'x', obf_tag_y = 'y',
-                             obf_tag_z = 'z', obf_tag_S = 'S', obf_tag_L = 'L', obf_tag_A = 'A', obf_tag_I = 'I',
-                             obf_tag_D = 'D', obf_tag_P = 'P';
+        // The pool used to be obf_pool_0 = 0 .. obf_pool_9 = 9 sitting next to an
+        // 'a'..'z' run of tag bytes. A consecutive byte run is the easiest pattern in
+        // this file to match on, and every predicate built on it hard-coded the values,
+        // so changing one number broke the other. The bytes are now drawn per
+        // expansion site from the compile-time entropy, which makes them different in
+        // every translation unit and - together with __TIME__ in the C++ mix - in every
+        // build, and the predicates below are identities that hold for *any* contents.
+        static volatile unsigned char obf_vb_0 = (unsigned char)RND(1, 255);
+        static volatile unsigned char obf_vb_1 = (unsigned char)RND(1, 255);
+        static volatile unsigned char obf_vb_2 = (unsigned char)RND(1, 255);
+        static volatile unsigned char obf_vb_3 = (unsigned char)RND(1, 255);
+        static volatile unsigned char obf_vb_4 = (unsigned char)RND(1, 255);
+        static volatile unsigned char obf_vb_5 = (unsigned char)RND(1, 255);
+        static volatile unsigned char obf_vb_6 = (unsigned char)RND(1, 255);
+        static volatile unsigned char obf_vb_7 = (unsigned char)RND(1, 255);
+        static volatile unsigned char obf_vb_8 = (unsigned char)RND(1, 255);
+        static volatile unsigned char obf_vb_9 = (unsigned char)RND(1, 255);
 
-        // Proxy accessors: another layer between the predicate and the value, and a
-        // bunch of one-instruction functions that have to stay in the binary.
-        static NOINLINE unsigned char obf_proxy_0() { return 0; }
-        static NOINLINE unsigned char obf_proxy_1() { return 1; }
-        static NOINLINE unsigned char obf_proxy_2() { return 2; }
-        static NOINLINE unsigned char obf_proxy_3() { return 3; }
-        static NOINLINE unsigned char obf_proxy_4() { return 4; }
-        static NOINLINE unsigned char obf_proxy_5() { return 5; }
-        static NOINLINE unsigned char obf_proxy_6() { return 6; }
-        static NOINLINE unsigned char obf_proxy_7() { return 7; }
-        static NOINLINE unsigned char obf_proxy_8() { return 8; }
-        static NOINLINE unsigned char obf_proxy_9() { return 9; }
-
-        static NOINLINE unsigned obf_pred_true() {
-            return (unsigned)((obf_pool_9 + obf_proxy_7() + OBF_RAND * obf_proxy_2() * obf_proxy_0()) / obf_pool_8) - obf_pool_1;
+        // Two reads of a volatile object may not be merged, so the optimizer has to
+        // keep both loads and cannot prove the comparison. The value does not matter:
+        // a total order makes (a != b) + (a == b) exactly one, and (a < b) & (b < a)
+        // exactly zero, for every pair a program can actually produce. Neither form
+        // contains a constant, and each reads a different pair of cells, so no two
+        // predicates disassemble the same way.
+        static NOINLINE unsigned obf_psel_a() {
+            const unsigned a = obf_vb_3, b = obf_vb_5;
+            return (unsigned)(a != b) + (unsigned)(a == b);
         }
-        static NOINLINE unsigned obf_pred_false() {
-            return (unsigned)(obf_pool_3 + obf_proxy_6() + OBF_RAND * obf_proxy_3() * obf_pool_0) - obf_proxy_9();
+        static NOINLINE unsigned obf_psel_b() {
+            const unsigned a = obf_vb_2, b = obf_vb_7;
+            return (unsigned)(a < b) & (unsigned)(b < a);
         }
 
-        #define OBF_PRED_TRUE  (obf_pred_true())
-        #define OBF_PRED_FALSE (obf_pred_false())
+        #define OBF_PRED_TRUE  (obf_psel_a())
+        #define OBF_PRED_FALSE (obf_psel_b())
     #else
         #define OBF_PRED_TRUE  1u
         #define OBF_PRED_FALSE 0u
@@ -534,11 +592,14 @@
 
         // Key schedule: one full width key per element instead of the classic
         // (key + index), so a long string does not walk up into the next key byte.
+        // The mixers and the shift widths come from the per-build constants: this runs
+        // inside the decryptor at run time, so its numbers are in the object file and
+        // must not be the published splitmix ones.
         template <class U>
         INLINE constexpr U key_at(unsigned char base, unsigned index) {
-            const unsigned char raw = (unsigned char)(base + (unsigned char)(index * 0x2Au));
-            unsigned long long h = (unsigned long long)raw * 0x9E3779B97F4A7C15ull + (unsigned long long)index * 0xC2B2AE3D27D4EB4Full;
-            h ^= h >> 33; h *= 0xFF51AFD7ED558CCDull; h ^= h >> 29;
+            const unsigned char raw = (unsigned char)(base + (unsigned char)(index * k::byte(OBF_K_STRIDE)));
+            unsigned long long h = (unsigned long long)raw * k::mul64(OBF_K_KA) + (unsigned long long)index * k::mul64(OBF_K_KB);
+            h ^= h >> k::shr(OBF_K_S1, 29u, 40u); h *= k::mul64(OBF_K_KC); h ^= h >> k::shr(OBF_K_S2, 25u, 36u);
             return (U)h;
         }
 
@@ -589,13 +650,17 @@
     #define OBF_TRAP_VARIANTS 6
 
     // Arithmetic stand-in for targets without inline asm: volatile forces the loads and
-    // stores to stay, the balanced pairs make it semantically a no-op.
+    // stores to stay, the balanced pairs make it semantically a no-op. The operands are
+    // drawn per expansion site and bound to a local, because a second RND() inside the
+    // same pair would return a different value and the pair would stop cancelling.
     #define OBF_BRK_ARITH(seed)                                                       \
         do {                                                                          \
-            volatile OBF_UINT obf_ar_ = (OBF_UINT)(seed) + 0x2Au;                     \
-            obf_ar_ ^= 0x5AU; obf_ar_ ^= 0x5AU;                                       \
-            obf_ar_ += 0x10u; obf_ar_ -= 0x10u;                                       \
-            (void)obf_ar_;                                                            \
+            volatile OBF_UINT obf_ar_ = (OBF_UINT)(seed);                             \
+            const OBF_UINT obf_ar_k_ = (OBF_UINT)RND(1, 0x3FFFFFFF);                  \
+            const OBF_UINT obf_ar_d_ = (OBF_UINT)RND(1, 0x3F);                         \
+            obf_ar_ ^= obf_ar_k_; obf_ar_ ^= obf_ar_k_;                                \
+            obf_ar_ += obf_ar_d_; obf_ar_ -= obf_ar_d_;                                \
+            (void)obf_ar_; (void)obf_ar_k_; (void)obf_ar_d_;                           \
         } while (0)
 
     #if !OBF_ASM_ENABLED || (!OBF_X86 && !OBF_ARM)
@@ -801,10 +866,10 @@
  * Two gates with the same contract - both return their argument unchanged - and
  * different strengths:
  *
- *   obf_cf_proxy  NOINLINE, reads the volatile pool and may embed asm. Cannot be
+ *   obf_kd_map  NOINLINE, reads the volatile pool and may embed asm. Cannot be
  *                 evaluated at compile time, so CFLOW_ASM_JUNK=0 swaps cflow over
  *                 to the gate below instead of forcing the user to give up cflow.
- *   obf_cf_gate   NOINLINE *and* constexpr. No volatile, no asm, therefore legal
+ *   obf_kc_map   NOINLINE *and* constexpr. No volatile, no asm, therefore legal
  *                 inside constexpr/static_assert, while noinline keeps the call
  *                 from being erased in ordinary code.
  *
@@ -863,18 +928,24 @@
     // The runtime gate. It only exists when asm junk is allowed, because with
     // CFLOW_ASM_JUNK=0 every cflow construct has to stay constexpr compatible.
     #if CFLOW_ASM_JUNK
-    static NOINLINE OBF_CF_T obf_cf_proxy(OBF_CF_T v) {
+    static NOINLINE OBF_CF_T obf_kd_map(OBF_CF_T v) {
         OBF_INDIRECT_BRANCH;
-        // The pool is unsigned char, so widen it before subtracting: 7 - 3*2 stays
-        // positive instead of wrapping around a promoted signed char.
         volatile OBF_CF_T kept = v;
-        OBF_CF_T a = (OBF_CF_T)(kept * ((OBF_CF_T)obf_pool_7 - (OBF_CF_T)obf_pool_3 * 2u));
-        BLOCK_FALSE(a = XOR(XOR(a, (OBF_CF_T)obf_proxy_5()), (OBF_CF_T)obf_proxy_5()));
-        BLOCK_TRUE (a = XOR(XOR(a, (OBF_CF_T)obf_proxy_9()), (OBF_CF_T)obf_proxy_9()));
-        BLOCK_FALSE(a = (OBF_CF_T)(a + (OBF_CF_T)obf_pool_0 * 13u));
+        // (a != b) + (a == b) is exactly one whatever the two cells hold, so the
+        // multiply preserves v without writing down a constant and without assuming
+        // the pool contains any particular byte (the old version needed 7 - 3*2 == 1).
+        const unsigned p = obf_vb_4, q = obf_vb_8;
+        const OBF_CF_T one = (OBF_CF_T)(p != q) + (OBF_CF_T)(p == q);
+        OBF_CF_T a = kept * one;
+        // Every decoy branch xors with the same cell twice: an involution that cannot
+        // corrupt a even if it were reached, and the operand comes back from a volatile
+        // load so the optimizer cannot pair the two xors up and cancel them.
+        BLOCK_FALSE(a = XOR(XOR(a, (OBF_CF_T)obf_vb_5), (OBF_CF_T)obf_vb_5));
+        BLOCK_TRUE (a = XOR(XOR(a, (OBF_CF_T)obf_vb_9), (OBF_CF_T)obf_vb_9));
+        BLOCK_FALSE(a = (OBF_CF_T)(a + (OBF_CF_T)obf_vb_0 * one));
         ASM_JUNK;
         obf_cf_end:
-        if (obf_pool_1 != 0u) {
+        if (obf_vb_1 != 0u) {
             return a;
         }
         obf_cf_fake:
@@ -883,7 +954,7 @@
     #endif
 
     // The compile-time gate.
-    static NOINLINE OBF_CX OBF_CF_T obf_cf_gate(OBF_CF_T v) {
+    static NOINLINE OBF_CX OBF_CF_T obf_kc_map(OBF_CF_T v) {
         const OBF_CF_T k = (OBF_CF_T)OBF_BUILD_SALT * 2654435761ull + 1ull;
         OBF_CF_T a = v;
         a = XOR(a, k);
@@ -897,18 +968,18 @@
     }
 
     #if CFLOW_ASM_JUNK
-        #define OBF_CF_MAP(v) obf_cf_proxy((OBF_CF_T)(v))
+        #define OBF_CF_MAP(v) obf_kd_map((OBF_CF_T)(v))
     #else
-        #define OBF_CF_MAP(v) obf_cf_gate((OBF_CF_T)(v))
+        #define OBF_CF_MAP(v) obf_kc_map((OBF_CF_T)(v))
     #endif
 
     // Junk that runs around a mutated `return`: it is an expression, so it can be
     // welded into a statement without changing which statement it belongs to, and it
     // stays constexpr legal when the asm junk is turned off.
     #if CFLOW_ASM_JUNK
-        #define OBF_CF_STEP(v) obf_cf_proxy((OBF_CF_T)(v))
+        #define OBF_CF_STEP(v) obf_kd_map((OBF_CF_T)(v))
     #else
-        #define OBF_CF_STEP(v) obf_cf_gate((OBF_CF_T)(v))
+        #define OBF_CF_STEP(v) obf_kc_map((OBF_CF_T)(v))
     #endif
 
     // A hard fault on purpose, for paths that must never be reached.
@@ -1154,27 +1225,33 @@ namespace obf {
 
     private:
         // The row index is stored masked, so no instruction carries the real slot.
-        INLINE static constexpr unsigned mask() { return (Seed * 2654435761u) & 0xFFFFu; }
+        INLINE static constexpr unsigned mask() { return (Seed * k::mul32(OBF_K_SLOT)) & 0xFFFFu; }
         INLINE static int slot() {
             return (int)(OBF_CF_MAP((OBF_CF_T)((OBF_CF_T)Real ^ (OBF_CF_T)mask())) ^ (OBF_CF_T)mask());
         }
 
         // Junk rows come from the site seed: same width, same look, no meaning.
         INLINE static constexpr unsigned decoy_byte(int row, unsigned index) {
-            unsigned long long h = ((unsigned long long)Seed + (unsigned long long)(row + 1) * 0x9E3779B97F4A7C15ull)
-                                 ^ ((unsigned long long)index * 0xC2B2AE3D27D4EB4Full);
-            h ^= h >> 31; h *= 0xFF51AFD7ED558CCDull; h ^= h >> 33;
+            unsigned long long h = ((unsigned long long)Seed + (unsigned long long)(row + 1) * k::mul64(OBF_K_KA))
+                                 ^ ((unsigned long long)index * k::mul64(OBF_K_D1));
+            h ^= h >> k::shr(OBF_K_D2, 28u, 40u); h *= k::mul64(OBF_K_KC); h ^= h >> k::shr(OBF_K_S2, 25u, 36u);
             return (unsigned)h;
         }
 
+        // The payload checksum, taken over the plaintext at compile time and over the
+        // decrypted row at run time. Its seed and multiplier are the build's own: the
+        // run-time half is real code and the published FNV numbers would show up in it.
         INLINE static constexpr unsigned hash_step(unsigned h, U v) {
+            const unsigned mul = k::mul32(OBF_K_MUL);
             for (size_t b = 0; b < sizeof(U); ++b)
-                h = XOR(h, (unsigned)((v >> (b * 8u)) & 0xFFu)) * 16777619u;
+                h = XOR(h, (unsigned)((v >> (b * 8u)) & 0xFFu)) * mul;
             return h;
         }
 
+        INLINE static constexpr unsigned check_seed() { return k::mul32(OBF_K_SEED); }
+
         INLINE constexpr void fill(const T* src) {
-            unsigned h = 2166136261u;
+            unsigned h = check_seed();
             for (int s = 0; s < Slots; ++s) {
                 const bool real = (s == Real);
                 for (size_t i = 0; i < Size; ++i) {
@@ -1194,7 +1271,7 @@ namespace obf {
         // Visual C++ refuses to constant-evaluate a constructor that reaches the value
         // through the address of its own parameter (C3615), while clang folds it happily.
         INLINE constexpr void fill_value(T value) {
-            unsigned h = 2166136261u;
+            unsigned h = check_seed();
             for (int s = 0; s < Slots; ++s) {
                 const bool real = (s == Real);
                 for (size_t i = 0; i < Size; ++i) {
@@ -1219,7 +1296,7 @@ namespace obf {
                 // Recompute a checksum the compiler took from the plaintext. If the
                 // ciphertext or the decryptor was patched it no longer matches, so the
                 // payload is quietly re-encrypted instead of handed out.
-                unsigned h = 2166136261u;
+                unsigned h = check_seed();
                 for (size_t i = 0; i < Size; ++i) h = hash_step(h, row[i]);
                 if (h != (unsigned)XOR(check_, mask())) {
                     xor_decode<U, Key, Size, Variant>(row);
@@ -1284,31 +1361,48 @@ namespace obf {
  * Messages are pushed through a volatile function pointer that is initialized to a
  * real function, so the strings survive every optimization and still show up in a
  * decompiler's cross-reference window as a plausible drawing routine.
+ *
+ * The internal names carry no project name any more: a MinGW build that ships
+ * unstripped leaves every static symbol in the image, and "obfusheader_" in the
+ * symbol table is a one-instruction signature. Strip the release binary anyway.
  * ============================================================================= */
 
 #if WATERMARKING
-    static void obfusheader_watermark_hook(const char* param) { ASM_JUNK; OBF_UNUSED(param); }
+    static void obf_present_draw(const char* param) { ASM_JUNK; OBF_UNUSED(param); }
     typedef void (*draw_ptr)(const char*);
-    static volatile draw_ptr obfusheader_watermark_orig = (draw_ptr)obfusheader_watermark_hook;
+    static volatile draw_ptr obf_prev_draw = (draw_ptr)obf_present_draw;
 
     #define WATERMARK(...)                                                       \
         const char* obf_wm_[] = { __VA_ARGS__ };                                 \
         for (volatile size_t obf_wm_i_ = 0;                                      \
              obf_wm_i_ < sizeof(obf_wm_) / sizeof(obf_wm_[0]); ++obf_wm_i_)      \
-            obfusheader_watermark_orig(obf_wm_[obf_wm_i_]);
+            obf_prev_draw(obf_wm_[obf_wm_i_]);
 #endif
 
 // Referenced by the call hiding decoys, so it exists either way: its only job is to
-// keep the watermark strings referenced by something the linker is not allowed to
-// drop, which is what makes them show up in a decompiler at all.
-static void obfusheader_decoy_main() {
+// keep the drawing routine referenced by something the linker is not allowed to
+// drop, which is what makes it show up in a decompiler at all.
+//
+// It used to pass the header's own three sentences down that path. Those were plain
+// text in .rdata in every binary built from this file, which made them the single
+// cheapest way to find obfusheader: match the string, match the header. A watermark is
+// only meaningful when the author supplies the text (WATERMARK("...")), so the decoy
+// now feeds the routine a buffer drawn from the per-build entropy instead: the
+// mechanism, the xref and the surviving bytes all stay, the fixed phrase goes away.
+static void obf_wm_sink() {
 #if WATERMARKING
-    WATERMARK("Stop reversing the binary",
-              "Reconsider your life choices",
-              "And go touch some grass");
-#else
-    ASM_JUNK;
+    static volatile char obf_wm_pad[24] = {
+        (char)RND(32, 122), (char)RND(32, 122), (char)RND(32, 122), (char)RND(32, 122),
+        (char)RND(32, 122), (char)RND(32, 122), (char)RND(32, 122), (char)RND(32, 122),
+        (char)RND(32, 122), (char)RND(32, 122), (char)RND(32, 122), (char)0,
+        (char)RND(32, 122), (char)RND(32, 122), (char)RND(32, 122), (char)RND(32, 122),
+        (char)RND(32, 122), (char)RND(32, 122), (char)RND(32, 122), (char)RND(32, 122),
+        (char)RND(32, 122), (char)RND(32, 122), (char)RND(32, 122), (char)0
+    };
+    obf_prev_draw((const char*)obf_wm_pad);
+    obf_prev_draw((const char*)obf_wm_pad + 12);
 #endif
+    ASM_JUNK;
 }
 
 /* =============================================================================
@@ -1321,14 +1415,14 @@ static void obfusheader_decoy_main() {
  * ============================================================================= */
 
 #ifdef __cplusplus
-    static void obfusheader_decoy_1() { obfusheader_decoy_main(); ASM_JUNK; }
-    static void obfusheader_decoy_2() { obfusheader_decoy_1(); ASM_JUNK; }
-    static void obfusheader_decoy_3() { ASM_JUNK; obfusheader_decoy_2(); }
-    static void obfusheader_decoy_4() { STACKBRK; }
-    static void obfusheader_decoy_5() { ASM_JUNK; obfusheader_decoy_2(); }
-    static void obfusheader_decoy_6() { ASM_JUNK; obfusheader_decoy_3(); }
-    static void obfusheader_decoy_7() { obfusheader_decoy_5(); ASM_JUNK; }
-    static void obfusheader_decoy_8() { STACKBRK; ASM_JUNK; }
+    static void obf_stub_1() { obf_wm_sink(); ASM_JUNK; }
+    static void obf_stub_2() { obf_stub_1(); ASM_JUNK; }
+    static void obf_stub_3() { ASM_JUNK; obf_stub_2(); }
+    static void obf_stub_4() { STACKBRK; }
+    static void obf_stub_5() { ASM_JUNK; obf_stub_2(); }
+    static void obf_stub_6() { ASM_JUNK; obf_stub_3(); }
+    static void obf_stub_7() { obf_stub_5(); ASM_JUNK; }
+    static void obf_stub_8() { STACKBRK; ASM_JUNK; }
 
     namespace obf {
 
@@ -1336,15 +1430,16 @@ static void obfusheader_decoy_main() {
 
         template <typename T, unsigned Seed, int Slot>
         INLINE T call_decoy() {
-            switch ((int)((Seed + (unsigned)Slot * 7u) % OBF_DECOY_COUNT)) {
-                case 0:  return RCAST(T, &obfusheader_decoy_1);
-                case 1:  return RCAST(T, &obfusheader_decoy_2);
-                case 2:  return RCAST(T, &obfusheader_decoy_3);
-                case 3:  return RCAST(T, &obfusheader_decoy_4);
-                case 4:  return RCAST(T, &obfusheader_decoy_5);
-                case 5:  return RCAST(T, &obfusheader_decoy_6);
-                case 6:  return RCAST(T, &obfusheader_decoy_7);
-                default: return RCAST(T, &obfusheader_decoy_8);
+            const unsigned pick = (unsigned)((Seed + (unsigned)Slot * k::byte(OBF_K_DECOY)) % OBF_DECOY_COUNT);
+            switch ((int)pick) {
+                case 0:  return RCAST(T, &obf_stub_1);
+                case 1:  return RCAST(T, &obf_stub_2);
+                case 2:  return RCAST(T, &obf_stub_3);
+                case 3:  return RCAST(T, &obf_stub_4);
+                case 4:  return RCAST(T, &obf_stub_5);
+                case 5:  return RCAST(T, &obf_stub_6);
+                case 6:  return RCAST(T, &obf_stub_7);
+                default: return RCAST(T, &obf_stub_8);
             }
         }
 
@@ -1369,7 +1464,7 @@ static void obfusheader_decoy_main() {
             // RND() draw: expanding the draw twice is what used to make the table
             // return a decoy instead of the target.
             static INLINE T get() {
-                const OBF_CF_T m = (OBF_CF_T)(Seed * 2654435761u) & 0xFFFFu;
+                const OBF_CF_T m = (OBF_CF_T)(Seed * k::mul32(OBF_K_SLOT)) & 0xFFFFu;
                 return table[(int)(OBF_CF_MAP((OBF_CF_T)Real ^ m) ^ m)];
             }
         };
@@ -1436,22 +1531,16 @@ static void obfusheader_decoy_main() {
 #ifdef __cplusplus
 namespace obf {
 
-    // Run-time half of the name matching: same algorithm as the constexpr one, so a
-    // compile-time OBF_HASH() can be compared against a table entry.
+    // Run-time half of the name matching: these call the constexpr originals instead
+    // of repeating the loop, so a compile-time OBF_HASH() is guaranteed to agree with
+    // what the loader's tables are measured against, and the mixing constants are
+    // emitted once rather than in four copies that could drift apart.
     INLINE unsigned hash_runtime(const char* s) {
-        unsigned h = 2166136261u;
-        for (; *s != 0; ++s) h = (h ^ (unsigned)(unsigned char)*s) * 16777619u;
-        return hash_salt(h);
+        return hash_salt(hash_fnv(s));
     }
 
     INLINE unsigned hash_runtime_lower(const char* s) {
-        unsigned h = 2166136261u;
-        for (; *s != 0; ++s) {
-            unsigned c = (unsigned)(unsigned char)*s;
-            if (c >= 'A' && c <= 'Z') c = c + 32u;
-            h = (h ^ c) * 16777619u;
-        }
-        return hash_salt(h);
+        return hash_salt(hash_fnv_lower(s));
     }
 
 #if OBF_WINDOWS
@@ -1472,13 +1561,13 @@ namespace obf {
         };
 
         INLINE unsigned hash_wide(const void* buf, unsigned short bytes) {
-            unsigned h = 2166136261u;
+            unsigned h = k::mul32(OBF_K_SEED);
             if (buf != 0) {
                 const unsigned short* w = (const unsigned short*)buf;
                 for (unsigned i = 0; (i + 1u) < (unsigned)bytes; i += 2u) {
                     unsigned c = (unsigned)w[i / 2u];
                     if (c >= 'A' && c <= 'Z') c = c + 32u;
-                    h = (h ^ c) * 16777619u;
+                    h = hash_feed(h, c);
                 }
             }
             return hash_salt(h);
@@ -1750,15 +1839,27 @@ namespace obf {
  * Windows only, and only interesting for shipped binaries: adds sections that
  * Detect-It-Easy and friends attribute to commercial protectors.
  * ============================================================================= */
-
-#define FAKE_SIG(name, section, sig) SECTION(section) volatile static char* name = (char*)sig;
+#if OBF_MSVC
+    #define FAKE_SIG(name, section, sig) SECTION(section) volatile static char* name = (char*)(sig)
+#else
+    #define OBF_FAKE_FILL                                                                        \
+        (char)RND(1, 255), (char)RND(1, 255), (char)RND(1, 255), (char)RND(1, 255),             \
+        (char)RND(1, 255), (char)RND(1, 255), (char)RND(1, 255), (char)RND(1, 255)
+    // The section attribute goes through its own macro on purpose: FAKE_SIG's own
+    // parameter is called `section`, and if the attribute were spelled out inline here
+    // the parameter would substitute the keyword too, turning section(".vmp0") into
+    // ".vmp0"(".vmp0") and failing the compile.
+    #define OBF_FAKE_ATTR(sec) __attribute__((used, section(sec)))
+    #define FAKE_SIG(name, section, sig)                                                    \
+        static volatile char name##_d[] OBF_FAKE_ATTR(section) = { OBF_FAKE_FILL };         \
+        static volatile char* name OBF_FAKE_ATTR(section) = (char*)(sig)
+#endif
 
 #if FAKE_SIGNATURES && OBF_WINDOWS && !KERNEL_MODE
-    #ifdef OBF_MSVC
+    #if OBF_MSVC
         #pragma section(".arch")
         #pragma section(".srdata")
         #pragma section(".xpdata")
-        #pragma section(".xdata")
         #pragma section(".xtls")
         #pragma section(".themida")
         #pragma section(".vmp0")
@@ -1768,18 +1869,42 @@ namespace obf {
         #pragma section(".enigma2")
         #pragma section(".dsstext")
     #endif
+
     // https://enigmaprotector.com
     FAKE_SIG(obf_fake_enigma1, ".enigma1", 0); FAKE_SIG(obf_fake_enigma2, ".enigma2", 0);
     // https://vmpsoft.com
     FAKE_SIG(obf_fake_vmp1, ".vmp0", 0); FAKE_SIG(obf_fake_vmp2, ".vmp1", 0); FAKE_SIG(obf_fake_vmp3, ".vmp2", 0);
-    // DENUVO
-    FAKE_SIG(obf_fake_denuvo1, ".arch", 0); FAKE_SIG(obf_fake_denuvo2, ".srdata", 0); FAKE_SIG(obf_fake_denuvo3, ".xdata", 0);
+    // DENUVO. The upstream list also baited ".xdata", which is dropped here: on x64 that
+    // is MSVC's own unwind section, and allocating into it produced LNK4078 (two .xdata
+    // sections with different attributes) in a real exception-handling build. The other
+    // four names are what the Denuvo detectors actually key on.
+    FAKE_SIG(obf_fake_denuvo1, ".arch", 0); FAKE_SIG(obf_fake_denuvo2, ".srdata", 0);
     FAKE_SIG(obf_fake_denuvo4, ".xpdata", 0);
-    FAKE_SIG(obf_fake_denuvo5, ".xtls", "\x64\x65\x6E\x75\x76\x6F\x5F\x61\x74\x64\x00\x00\x00\x00\x00\x00");
+    FAKE_SIG(obf_fake_denuvo5, ".xtls", 0);
     // THEMIDA
     FAKE_SIG(obf_fake_themida1, ".themida", 0);
     // SECUROM
     FAKE_SIG(obf_fake_securom1, ".dsstext", 0);
+#if !OBF_MSVC
+    static volatile char** const obf_fake_refs[] = {
+        &obf_fake_enigma1, &obf_fake_enigma2, &obf_fake_vmp1, &obf_fake_vmp2, &obf_fake_vmp3,
+        &obf_fake_denuvo1, &obf_fake_denuvo2, &obf_fake_denuvo4,
+        &obf_fake_denuvo5, &obf_fake_themida1, &obf_fake_securom1
+    };
+
+    // Addresses only, never the bytes they point at: the bait is on-disk data, and the
+    // sections have no readable characteristics, so a real dereference would fault.
+    static void obf_fake_touch(void) {
+        volatile uintptr_t obf_sink_ = 0u;
+        for (volatile size_t obf_i_ = 0;
+             obf_i_ < sizeof(obf_fake_refs) / sizeof(obf_fake_refs[0]); ++obf_i_)
+            obf_sink_ = (uintptr_t)obf_fake_refs[obf_i_];
+        OBF_UNUSED(obf_sink_);
+    }
+
+    // A constructor is what makes that reference unremovable.
+    __attribute__((used, constructor)) static void obf_fake_init(void) { obf_fake_touch(); }
+#endif
 #endif
 
 /* =============================================================================

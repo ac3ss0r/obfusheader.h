@@ -73,8 +73,16 @@ extern "C" {
 
     EXPORT void call_export_test() {
         #ifdef _WINDOWS
-                if (CALL_EXPORT("kernel32.dll", "LoadLibraryA", int(*)(const char*), "user32.dll"))
-                    CALL_EXPORT("user32.dll", "MessageBoxA", int(*)(int, const char*, const char*, int), 0, "Real", "Msgbox", 0);
+            // The prototype has to be a named typedef, and it has to say WINAPI. An
+            // inline `int(*)(const char*)` here is the spelling MSVC rejects (it reads
+            // the expansion as a functional cast, C2143/C2059) while clang takes it, and
+            // a cdecl prototype is wrong on 32-bit Windows because these APIs are
+            // __stdcall: the callee pops the args and the stack ends up misaligned.
+            typedef HMODULE(WINAPI* load_lib_t)(LPCSTR);
+            typedef int(WINAPI* msg_box_t)(HWND, LPCSTR, LPCSTR, UINT);
+
+            if (CALL_EXPORT("kernel32.dll", "LoadLibraryA", load_lib_t, "user32.dll"))
+                CALL_EXPORT("user32.dll", "MessageBoxA", msg_box_t, 0, "Real", "Msgbox", 0);
         #elif defined(_LINUX)
 
         #endif
