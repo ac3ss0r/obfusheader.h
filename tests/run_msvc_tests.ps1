@@ -73,7 +73,7 @@ try {
     }
     & cl.exe /nologo /std:c11 /MT /O2 /W3 /WX (Join-Path $PSScriptRoot 'c_fallback.c') "/Fo$OutputDir\c-fallback.obj" "/Fe$OutputDir\c-fallback.exe" > "$OutputDir\c-fallback.build.log" 2>&1
     if ($LASTEXITCODE -ne 0) { throw 'C fallback compile failed' }
-    & "$OutputDir\c-fallback.exe" > "$OutputDir\c-fallback.run.log" 2>&1
+    & node (Join-Path $PSScriptRoot 'run_binary.mjs') "$OutputDir\c-fallback.exe" "$OutputDir\c-fallback.run.log"
     if ($LASTEXITCODE -ne 0) { throw 'C fallback failed' }
     $rows | Export-Csv -NoTypeInformation "$OutputDir\results.csv"
     Write-Host "Passed $($rows.Count) MSVC $Architecture builds and C fallback. Artifacts: $OutputDir"
