@@ -75,6 +75,9 @@
         #define VAULT_CHECK 1          // verify the decrypted payload against a
                                        // compile-time checksum of the original
     #endif
+    #ifndef CONST_CLEAR
+        #define CONST_CLEAR 1          // clear the owned plaintext row on destruction
+    #endif
 
     // ---- control flow ----
     #ifndef CFLOW_BRANCHING
@@ -260,6 +263,9 @@
 
     #include <stdint.h>  // exact width integers for the cipher, PE and ELF layouts
     #include <stddef.h>  // size_t
+    #if defined(__cplusplus) && IMPORT_CACHE
+        #include <atomic>
+    #endif
 
     #if OBF_MSVC
         #pragma warning(push)
@@ -287,7 +293,7 @@
     #if OBF_MSVC
         #define INLINE __forceinline
     #else
-        #define INLINE __attribute__((always_inline))
+        #define INLINE inline __attribute__((always_inline))
     #endif
 
     // The opposite: keeps a function from being folded into its caller, so the
@@ -349,12 +355,18 @@
  *
  * __COUNTER__ + __LINE__ + __TIME__ make every expansion of RND() different, which
  * is what makes the junk below polymorphic instead of a copy of the same block.
- * __TIME__ is reduced to a sum of its characters so no "HH:MM:SS" string survives.
+ * __TIME__ is encoded as seconds (or replaced by OBF_SEED), not stored as a string.
  * ============================================================================= */
 
     #ifdef __cplusplus
-        static constexpr int OBF_TIME_HASH = __TIME__[0] + __TIME__[1] + __TIME__[3]
-                                           + __TIME__[4] + __TIME__[6] + __TIME__[7];
+        // Preserve digit positions: a sum collapsed most times to the same seed.
+        // Define OBF_SEED consistently in every TU for reproducible builds.
+        #ifndef OBF_SEED
+            #define OBF_SEED ((__TIME__[0] - '0') * 36000u + (__TIME__[1] - '0') * 3600u \
+                            + (__TIME__[3] - '0') * 600u + (__TIME__[4] - '0') * 60u \
+                            + (__TIME__[6] - '0') * 10u + (__TIME__[7] - '0'))
+        #endif
+        static constexpr unsigned OBF_TIME_HASH = (unsigned)OBF_SEED;
         #define OBF_TIME_MIX ((unsigned)OBF_TIME_HASH * 0x9E3779B9u)
     #else
         // No constexpr in C, so __TIME__ would end up embedded in the binary.
@@ -363,8 +375,13 @@
 
     // A 32 bit avalanche per expansion site: consecutive __COUNTER__ values are
     // multiplied apart and folded again so small ranges stay evenly spread.
+    #ifdef __cplusplus
+        // Force constant evaluation even when RND appears in ordinary runtime code.
+        #define OBF_ENTROPY (obf::entropy_constant<obf::site_entropy((unsigned)__COUNTER__, (unsigned)__LINE__)>::value)
+    #else
     #define OBF_ENTROPY                                                                 \
         ((unsigned)((unsigned)(__COUNTER__ * 2654435761u) ^ ((unsigned)__LINE__ * 40503u) ^ OBF_TIME_MIX) * 2246822519u)
+    #endif
 
     #define RND(Min, Max) ((Min) + (int)(OBF_ENTROPY % (unsigned)(((Max) - (Min)) + 1)))
     #define OBF_RAND RND(1, 10) // legacy alias used by the predicate pool
@@ -375,6 +392,15 @@
 
     #ifdef __cplusplus
     namespace obf {
+
+        INLINE constexpr unsigned site_entropy(unsigned counter, unsigned line) {
+            unsigned h = counter * 2654435761u ^ line * 40503u ^ OBF_TIME_MIX;
+            h ^= h >> 16u; h *= 0x7feb352du;
+            h ^= h >> 15u; h *= 0x846ca68bu;
+            return h ^ (h >> 16u);
+        }
+        template <unsigned Value>
+        struct entropy_constant { static constexpr unsigned value = Value; };
 
         // Per-build mixing constants.
         namespace k {
@@ -467,6 +493,12 @@
             return h;
         }
 
+        INLINE constexpr unsigned hash_gnu(const char* s) {
+            unsigned h = 5381u;
+            for (; *s != 0; ++s) h = h * 33u + (unsigned)(unsigned char)*s;
+            return h;
+        }
+
         INLINE constexpr unsigned hash_salt(unsigned h) {
             return (h ^ OBF_BUILD_SALT) * k::mul32(OBF_K_SALT);
         }
@@ -526,11 +558,13 @@
         // predicates disassemble the same way.
         static NOINLINE unsigned obf_psel_a() {
             const unsigned a = obf_vb_3, b = obf_vb_5;
-            return (unsigned)(a != b) + (unsigned)(a == b);
+            volatile unsigned equal = (unsigned)(a == b);
+            return (unsigned)(a != b) + equal;
         }
         static NOINLINE unsigned obf_psel_b() {
             const unsigned a = obf_vb_2, b = obf_vb_7;
-            return (unsigned)(a < b) & (unsigned)(b < a);
+            volatile unsigned less = (unsigned)(a < b);
+            return less & (unsigned)(b < a);
         }
 
         #define OBF_PRED_TRUE  (obf_psel_a())
@@ -576,6 +610,70 @@
         };
 
         #define OBF_CIPHER_VARIANTS 5
+        #define OBF_PAYLOAD_VARIANTS 8
+
+        // Distinct reversible instruction families, rather than alternate XOR
+        // spellings. All arithmetic is modulo the unsigned payload width.
+        template <class U, int Variant, unsigned Site>
+        struct payload_cipher {
+            static constexpr unsigned bits = sizeof(U) * 8u;
+            static constexpr unsigned turn = 1u + Site % (bits - 1u);
+            static INLINE constexpr U addend() { return (U)(k::draw(Site ^ 0x91u) | 1ull); }
+            static INLINE constexpr U multiplier() { return (U)(k::draw(Site ^ 0x37u) | 3ull); }
+            static INLINE constexpr U inverse() {
+                uint64_t x = 1, m = multiplier();
+                for (unsigned i = 0; i < 6; ++i) x *= 2ull - m * x;
+                return (U)x;
+            }
+            static INLINE constexpr U plus(U a, U b) { return (U)((uint64_t)a + b); }
+            static INLINE constexpr U minus(U a, U b) { return (U)((uint64_t)a - b); }
+            static INLINE constexpr U times(U a, U b) { return (U)((uint64_t)a * b); }
+            static INLINE constexpr U rol(U a) {
+                return (U)(((uint64_t)a << turn) | ((uint64_t)a >> (bits - turn)));
+            }
+            static INLINE constexpr U ror(U a) {
+                return (U)(((uint64_t)a >> turn) | ((uint64_t)a << (bits - turn)));
+            }
+            static INLINE constexpr uint64_t round(uint64_t x, U key, unsigned n) {
+                const uint64_t mask = (1ull << (bits / 2u)) - 1ull;
+                const uint64_t salt = k::draw(Site + n);
+                return Variant == 5
+                    ? ((x + ((uint64_t)key ^ salt)) ^ (x >> (bits / 4u))) & mask
+                    : ((x * (salt | 1ull)) + ((uint64_t)key ^ (salt >> 32u))) & mask;
+            }
+            static INLINE constexpr U feistel(U a, U key, bool undo) {
+                const uint64_t mask = (1ull << (bits / 2u)) - 1ull;
+                uint64_t lo = (uint64_t)a & mask, hi = (uint64_t)a >> (bits / 2u);
+                if (!undo) {
+                    lo ^= round(hi, key, 1u);
+                    hi ^= round(lo, key, 2u);
+                    lo ^= round(hi, key, 3u);
+                } else {
+                    lo ^= round(hi, key, 3u);
+                    hi ^= round(lo, key, 2u);
+                    lo ^= round(hi, key, 1u);
+                }
+                return (U)((hi << (bits / 2u)) | lo);
+            }
+            static INLINE constexpr U encode(U a, U key) {
+                if (Variant == 0) return (U)(a ^ key);
+                if (Variant == 1) return (U)(plus(a, addend()) ^ key);
+                if (Variant == 2) return rol(plus((U)(a ^ key), addend()));
+                if (Variant == 3) return (U)(times(a, multiplier()) ^ key);
+                if (Variant == 4) return plus(rol(times((U)(a ^ key), multiplier())), addend());
+                if (Variant == 5 || Variant == 7) return feistel(a, key, false);
+                return (U)(rol(plus(a, key)) ^ addend());
+            }
+            static INLINE constexpr U decode(U a, U key) {
+                if (Variant == 0) return (U)(a ^ key);
+                if (Variant == 1) return minus((U)(a ^ key), addend());
+                if (Variant == 2) return (U)(minus(ror(a), addend()) ^ key);
+                if (Variant == 3) return times((U)(a ^ key), inverse());
+                if (Variant == 4) return (U)(times(ror(minus(a, addend())), inverse()) ^ key);
+                if (Variant == 5 || Variant == 7) return feistel(a, key, true);
+                return minus(ror((U)(a ^ addend())), key);
+            }
+        };
 
         // Unsigned integer of exactly N bytes; the cipher always works on the widest
         // unsigned type of the payload's size, which is what keeps bool and char keys
@@ -590,15 +688,43 @@
         template <class T>
         struct cipher_of { typedef typename uint_of<sizeof(T)>::type type; };
 
+        template <size_t Size, unsigned Site>
+        struct payload_layout {
+            static INLINE constexpr size_t gcd(size_t a, size_t b) {
+                while (b != 0) { const size_t r = a % b; a = b; b = r; }
+                return a;
+            }
+            static INLINE constexpr size_t stride() {
+                size_t candidate = 1u + (size_t)(k::draw(Site ^ 0x51u) % Size);
+                while (gcd(candidate, Size) != 1u) candidate = candidate % Size + 1u;
+                return candidate;
+            }
+            static INLINE constexpr size_t at(size_t index) {
+                constexpr size_t step = stride();
+                constexpr size_t offset = (size_t)(k::draw(Site ^ 0x29u) % Size);
+                return (index * step + offset) % Size;
+            }
+        };
+
         // Key schedule: one full width key per element instead of the classic
         // (key + index), so a long string does not walk up into the next key byte.
         // The mixers and the shift widths come from the per-build constants: this runs
         // inside the decryptor at run time, so its numbers are in the object file and
         // must not be the published splitmix ones.
         template <class U>
-        INLINE constexpr U key_at(unsigned char base, unsigned index) {
-            const unsigned char raw = (unsigned char)(base + (unsigned char)(index * k::byte(OBF_K_STRIDE)));
-            unsigned long long h = (unsigned long long)raw * k::mul64(OBF_K_KA) + (unsigned long long)index * k::mul64(OBF_K_KB);
+        INLINE constexpr U key_at(unsigned base, unsigned index) {
+            unsigned long long h = (unsigned long long)base * k::mul64(OBF_K_KA) + (unsigned long long)index * k::mul64(OBF_K_KB);
+            if ((base & 3u) == 1u) {
+                h = ((unsigned long long)base + index * k::mul64(OBF_K_KC)) ^ k::mul64(OBF_K_KB);
+                h ^= h << 17u;
+            } else if ((base & 3u) == 2u) {
+                h = (unsigned long long)base ^ ((unsigned long long)index * k::mul64(OBF_K_KA));
+                h += (h << 23u) | (h >> 41u);
+            } else if ((base & 3u) == 3u) {
+                h = ((unsigned long long)base + index) * k::mul64(OBF_K_KC);
+                h ^= h >> 19u;
+                h *= k::mul64(OBF_K_KB);
+            }
             h ^= h >> k::shr(OBF_K_S1, 29u, 40u); h *= k::mul64(OBF_K_KC); h ^= h >> k::shr(OBF_K_S2, 25u, 36u);
             return (U)h;
         }
@@ -624,7 +750,7 @@
 
         // A bool/char payload must not lose the key: this is the regression that the
         // old "#define true 1" workaround was papering over.
-        static_assert(cipher<uint8_t, 0>::mix((uint8_t)1u, key_at<uint8_t>((unsigned char)0x80u, 0u)) != 1u,
+        static_assert(cipher<uint8_t, 0>::mix((uint8_t)1u, (uint8_t)0x80u) != 1u,
                       "bool payload must actually change under the key");
     }
     #endif
@@ -658,8 +784,8 @@
             volatile OBF_UINT obf_ar_ = (OBF_UINT)(seed);                             \
             const OBF_UINT obf_ar_k_ = (OBF_UINT)RND(1, 0x3FFFFFFF);                  \
             const OBF_UINT obf_ar_d_ = (OBF_UINT)RND(1, 0x3F);                         \
-            obf_ar_ ^= obf_ar_k_; obf_ar_ ^= obf_ar_k_;                                \
-            obf_ar_ += obf_ar_d_; obf_ar_ -= obf_ar_d_;                                \
+            obf_ar_ = obf_ar_ ^ obf_ar_k_; obf_ar_ = obf_ar_ ^ obf_ar_k_;              \
+            obf_ar_ = obf_ar_ + obf_ar_d_; obf_ar_ = obf_ar_ - obf_ar_d_;              \
             (void)obf_ar_; (void)obf_ar_k_; (void)obf_ar_d_;                           \
         } while (0)
 
@@ -667,19 +793,21 @@
         #define OBF_BRK_NONE 1
     #elif OBF_GNU && OBF_X86
         #define OBF_ASM_PLAIN(text) __asm__ __volatile__(text)
-        #define OBF_ASM_RW(insn)    do { OBF_UINT obf_j_ = 0; __asm__ __volatile__(insn : "+r"(obf_j_)); (void)obf_j_; } while (0)
+        #define OBF_ASM_RW(insn)    do { OBF_UINT obf_j_ = 0; __asm__ __volatile__(insn : "+r"(obf_j_) : : "cc"); (void)obf_j_; } while (0)
 
         #define OBF_BRK_0  OBF_ASM_PLAIN("nop")
         #define OBF_BRK_1  OBF_ASM_PLAIN("xchgw %ax, %ax")
         #define OBF_BRK_2  do { OBF_ASM_RW("lea 0x10(%0), %0"); OBF_ASM_RW("sub $0x10, %0"); } while (0)
         #define OBF_BRK_3  do { OBF_ASM_RW("not %0"); OBF_ASM_RW("not %0"); } while (0)
-        #define OBF_BRK_4  OBF_ASM_PLAIN("pushf" "\n\t" "popf")
+        // Never touch the stack: pushf can overwrite a SysV red-zone local.
+        #define OBF_BRK_4  OBF_ASM_RW("test %0, %0")
         #define OBF_BRK_5  do { OBF_ASM_RW("bswap %0"); OBF_ASM_RW("bswap %0"); } while (0)
-        #define OBF_BRK_6  OBF_ASM_PLAIN("std" "\n\t" "cld")
+        #define OBF_BRK_6  do { OBF_ASM_RW("rol $3, %0"); OBF_ASM_RW("ror $3, %0"); } while (0)
         #define OBF_BRK_7  OBF_ASM_PLAIN(".byte 0x0f,0x1f,0x00")
         #define OBF_BRK_8  do { OBF_ASM_RW("lea 0x2(%0), %0"); OBF_ASM_RW("lea -0x2(%0), %0"); } while (0)
         #define OBF_BRK_9  OBF_ASM_PLAIN(".byte 0x64,0x90")
-        #define OBF_BRK_10 OBF_ASM_PLAIN("lahf" "\n\t" "sahf")
+        // LAHF writes AH; basic asm hides that clobber from the allocator.
+        #define OBF_BRK_10 __asm__ __volatile__("lahf\n\tsahf" : : : "eax", "cc")
         #define OBF_BRK_11 do { OBF_ASM_RW("mov %0, %0"); OBF_ASM_RW("or $0x0, %0"); } while (0)
 
         #define OBF_TRAP_0 BLOCK_FALSE(OBF_ASM_PLAIN("int3"))
@@ -691,7 +819,7 @@
     #elif OBF_GNU && OBF_ARM && OBF_64BIT
         // aarch64
         #define OBF_ASM_PLAIN(text) __asm__ __volatile__(text)
-        #define OBF_ASM_RW(insn)    do { OBF_UINT obf_j_ = 0; __asm__ __volatile__(insn : "+r"(obf_j_)); (void)obf_j_; } while (0)
+        #define OBF_ASM_RW(insn)    do { OBF_UINT obf_j_ = 0; __asm__ __volatile__(insn : "+r"(obf_j_) : : "cc"); (void)obf_j_; } while (0)
 
         #define OBF_BRK_0  OBF_ASM_PLAIN("nop")
         #define OBF_BRK_1  OBF_ASM_PLAIN("yield")
@@ -716,7 +844,7 @@
         // arm32 / thumb2: "l" keeps the scratch in the low registers, and only
         // encodings that exist in both ISA states are used.
         #define OBF_ASM_PLAIN(text) __asm__ __volatile__(text)
-        #define OBF_ASM_RW(insn)    do { unsigned obf_j_ = 0; __asm__ __volatile__(insn : "+l"(obf_j_)); (void)obf_j_; } while (0)
+        #define OBF_ASM_RW(insn)    do { unsigned obf_j_ = 0; __asm__ __volatile__(insn : "+l"(obf_j_) : : "cc"); (void)obf_j_; } while (0)
 
         #define OBF_BRK_0  OBF_ASM_PLAIN("nop")
         #define OBF_BRK_1  OBF_ASM_PLAIN("yield")
@@ -748,8 +876,8 @@
         #define OBF_BRK_3  OBF_ASM_EMIT(_emit 0x2E) OBF_ASM_EMIT(_emit 0x90)
         #define OBF_BRK_4  OBF_ASM_EMIT(_emit 0x0F) OBF_ASM_EMIT(_emit 0x1F) OBF_ASM_EMIT(_emit 0x00)
         #define OBF_BRK_5  OBF_ASM_EMIT(_emit 0x87) OBF_ASM_EMIT(_emit 0xC0)
-        #define OBF_BRK_6  OBF_ASM_EMIT(pushfd) OBF_ASM_EMIT(popfd)
-        #define OBF_BRK_7  OBF_ASM_EMIT(_emit 0xF5) OBF_ASM_EMIT(_emit 0xFC)
+        #define OBF_BRK_6  OBF_ASM_EMIT(_emit 0x66) OBF_ASM_EMIT(_emit 0x90)
+        #define OBF_BRK_7  OBF_ASM_EMIT(_emit 0x0F) OBF_ASM_EMIT(_emit 0x1F) OBF_ASM_EMIT(_emit 0x40) OBF_ASM_EMIT(_emit 0x00)
         #define OBF_BRK_8  OBF_ASM_EMIT(_emit 0x8D) OBF_ASM_EMIT(_emit 0x64) OBF_ASM_EMIT(_emit 0x24) OBF_ASM_EMIT(_emit 0x00)
         #define OBF_BRK_9  OBF_ASM_EMIT(_emit 0x65) OBF_ASM_EMIT(_emit 0x90)
         #define OBF_BRK_10 OBF_ASM_EMIT(_emit 0x36) OBF_ASM_EMIT(_emit 0x90)
@@ -883,17 +1011,17 @@
         #if OBF_X86
             #define OBF_INDIRECT_BRANCH                                                                              \
                 do { OBF_UINT obf_ib_ = 1;                                                                           \
-                     __asm__ __volatile__("xor %0, %0" "\n\t" "jz 1f" "\n\t" ".byte 0x00" "\n\t" "1:" : "+r"(obf_ib_)); \
+                     __asm__ __volatile__("xor %0, %0" "\n\t" "jz 1f" "\n\t" ".byte 0x00" "\n\t" "1:" : "+r"(obf_ib_) : : "cc"); \
                      (void)obf_ib_; } while (0)
         #elif OBF_64BIT
             #define OBF_INDIRECT_BRANCH                                                                              \
                 do { OBF_UINT obf_ib_ = 1;                                                                           \
-                     __asm__ __volatile__("cmp %0, %0" "\n\t" "b.eq 1f" "\n\t" ".word 0xd4200000" "\n\t" "1:" : "+r"(obf_ib_)); \
+                     __asm__ __volatile__("cmp %0, %0" "\n\t" "b.eq 1f" "\n\t" ".word 0xd4200000" "\n\t" "1:" : "+r"(obf_ib_) : : "cc"); \
                      (void)obf_ib_; } while (0)
         #else
             #define OBF_INDIRECT_BRANCH                                                                              \
                 do { unsigned obf_ib_ = 1;                                                                           \
-                     __asm__ __volatile__("teq %0, %0" "\n\t" "beq 1f" "\n\t" ".word 0xe7f001f0" "\n\t" "1:" : "+l"(obf_ib_)); \
+                     __asm__ __volatile__("teq %0, %0" "\n\t" "beq 1f" "\n\t" ".word 0xe7f001f0" "\n\t" "1:" : "+l"(obf_ib_) : : "cc"); \
                      (void)obf_ib_; } while (0)
         #endif
     #elif OBF_IBRANCH_ENABLED && OBF_MSVC && OBF_X86 && !OBF_64BIT
@@ -967,9 +1095,29 @@
         return (OBF_CF_T)(a + (a & 0ull));
     }
 
-    #if CFLOW_ASM_JUNK
+    #if CFLOW_ASM_JUNK && defined(__cplusplus)
+    namespace obf {
+        // Each use site gets its own reversible gate and constants. Volatile
+        // storage prevents the encode/decode pair collapsing into an identity.
+        template <unsigned Site>
+        struct site_gate {
+            static NOINLINE OBF_CF_T map(OBF_CF_T v) {
+                typedef payload_cipher<uint64_t, 1 + Site % 7u, Site> codec;
+                const uint64_t key = k::draw(Site ^ 0xb9u);
+                volatile uint64_t encoded = codec::encode(v, key);
+                OBF_INDIRECT_BRANCH;
+                ASM_JUNK;
+                return codec::decode(encoded, key);
+            }
+        };
+    }
+        #define OBF_SITE_MAP(site, v) obf::site_gate<(unsigned)(site)>::map((OBF_CF_T)(v))
+        #define OBF_CF_MAP(v) OBF_SITE_MAP(OBF_ENTROPY, v)
+    #elif CFLOW_ASM_JUNK
+        #define OBF_SITE_MAP(site, v) obf_kd_map((OBF_CF_T)(v))
         #define OBF_CF_MAP(v) obf_kd_map((OBF_CF_T)(v))
     #else
+        #define OBF_SITE_MAP(site, v) obf_kc_map((OBF_CF_T)(v))
         #define OBF_CF_MAP(v) obf_kc_map((OBF_CF_T)(v))
     #endif
 
@@ -977,7 +1125,7 @@
     // welded into a statement without changing which statement it belongs to, and it
     // stays constexpr legal when the asm junk is turned off.
     #if CFLOW_ASM_JUNK
-        #define OBF_CF_STEP(v) obf_kd_map((OBF_CF_T)(v))
+        #define OBF_CF_STEP(v) OBF_CF_MAP(v)
     #else
         #define OBF_CF_STEP(v) obf_kc_map((OBF_CF_T)(v))
     #endif
@@ -1009,17 +1157,32 @@
             return vals[sizeof...(Args)];
         }
     }
-    #define OBF_CF_COND(...) obf::cond_last(__VA_ARGS__)
-    #define OBF_CF_VALUE(...) obf::val_last(__VA_ARGS__)
+    // Keep the comma expression intact, including sequencing and overloaded commas.
+    #define OBF_CF_COND(...) ((OBF_UINT)(bool)(__VA_ARGS__))
+    #define OBF_CF_VALUE(...) ((long long)(__VA_ARGS__))
     #else
-    #define OBF_CF_COND(x) ((OBF_UINT)(x))
-    #define OBF_CF_VALUE(x) ((long long)(x))
+    #define OBF_CF_COND(...) ((OBF_UINT)!!(__VA_ARGS__))
+    #define OBF_CF_VALUE(...) ((long long)(__VA_ARGS__))
     #endif
 
     // nonzero in, nonzero out, plus a per-site constant conjure. Variadic so that
     // conditions containing commas keep working.
     #define OBF_CF_TRUTH(...) (OBF_CF_MAP(OBF_CF_COND(__VA_ARGS__)) != (OBF_UINT)0 && OBF_RAND != 0)
-    #define OBF_CF_SWITCH(...) ((long long)OBF_CF_MAP((OBF_UINT)OBF_CF_VALUE(__VA_ARGS__)))
+    #ifdef __cplusplus
+        #define OBF_CF_SWITCH(...) obf::switch_map<OBF_ENTROPY>((__VA_ARGS__))
+    #elif OBF_GNU
+        #define OBF_CF_SWITCH(...) ((__typeof__((__VA_ARGS__)))OBF_CF_MAP((OBF_CF_T)(__VA_ARGS__)))
+    #elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+        #define OBF_CF_SWITCH(...) _Generic((__VA_ARGS__), \
+            unsigned long long: (unsigned long long)OBF_CF_MAP((OBF_CF_T)(__VA_ARGS__)), \
+            unsigned long: (unsigned long)OBF_CF_MAP((OBF_CF_T)(__VA_ARGS__)), \
+            unsigned int: (unsigned int)OBF_CF_MAP((OBF_CF_T)(__VA_ARGS__)), \
+            long long: (long long)OBF_CF_MAP((OBF_CF_T)(__VA_ARGS__)), \
+            long: (long)OBF_CF_MAP((OBF_CF_T)(__VA_ARGS__)), \
+            default: (int)OBF_CF_MAP((OBF_CF_T)(__VA_ARGS__)))
+    #else
+        #define OBF_CF_SWITCH(...) ((long long)OBF_CF_MAP((OBF_CF_T)OBF_CF_VALUE(__VA_ARGS__)))
+    #endif
 
 /* =============================================================================
  * 8. METAPROGRAMMING
@@ -1145,8 +1308,8 @@ namespace meta {
 /* =============================================================================
  * 9. COMPILE-TIME CONSTANT ENCRYPTION
  *
- * Everything is computed by the compiler: only cipher bytes reach the object file,
- * the plaintext never does. Three designs are worth calling out:
+ * Payload encoding is evaluated by the compiler. Dedicated binary scans verify
+ * plaintext absence for tested compiler configurations. Three design choices:
  *
  *   - The payload is stored in an unsigned integer of the same width as the source
  *     type, not in the source type itself. That is what makes OBF(true) work: with
@@ -1156,9 +1319,9 @@ namespace meta {
  *   - Each payload lives in a table of VAULT_SLOTS same-sized rows where only one
  *     row is real, reached through a masked index recovered by a non-inlinable
  *     call. That hides the reference the same way the call tables do in section 11.
- *   - The key schedule is a hash of (key, index) instead of (key + index), and the
- *     xor is chosen per instantiation out of five algebraic identities, so two
- *     identical literals never decrypt through the same code.
+ *   - The key schedule has four shapes and retains the full site key. Payload
+ *     encoding selects eight reversible families with per-site constants instead
+ *     of equivalent XOR spellings that optimizers canonicalize.
  * ============================================================================= */
 
 #ifdef __cplusplus
@@ -1187,26 +1350,34 @@ namespace obf {
     // they can never corrupt the result even if they were reached, and because the
     // key comes back from a non-inlinable call the optimizer cannot pair them up
     // and cancel them either.
-    template <class U, unsigned char Key, size_t Size, int Variant>
+    template <class U, unsigned Key, size_t Size, int Variant, unsigned Site = 0>
     INLINE void xor_decode(U* row) {
+        // A volatile ciphertext read is required even with all cflow disabled.
+        // noinline alone does not prevent constant propagation (including LTO).
+        volatile U* input = row;
 #if CFLOW_CONST_DECRYPTION
-        for (volatile size_t i = 0; i < Size; ++i) {
+        for (volatile size_t i = 0; i < Size; i = i + 1u) {
+            const size_t physical = payload_layout<Size, Site>::at((size_t)i);
             const OBF_CF_T base = (OBF_CF_T)key_at<U>(Key, (unsigned)i);
-            BLOCK_FALSE(row[i] = cipher<U, Variant>::mix(cipher<U, Variant>::mix(row[i], (U)OBF_CF_MAP(base + 1u)), (U)OBF_CF_MAP(base + 1u)))
+            const U encrypted = input[physical];
+            row[physical] = encrypted;
+            BLOCK_FALSE(row[physical] = cipher<U, Variant>::mix(cipher<U, Variant>::mix(row[physical], (U)OBF_CF_MAP(base + 1u)), (U)OBF_CF_MAP(base + 1u)))
             BLOCK_TRUE(
-                BLOCK_FALSE(row[i] = cipher<U, Variant>::mix(cipher<U, Variant>::mix(row[i], (U)OBF_CF_MAP(base + 2u)), (U)OBF_CF_MAP(base + 2u)))
-                BLOCK_FALSE(row[i] = cipher<U, Variant>::mix(cipher<U, Variant>::mix(row[i], (U)OBF_CF_MAP(base + 3u)), (U)OBF_CF_MAP(base + 3u)))
-                BLOCK_TRUE(row[i] = cipher<U, Variant>::mix(row[i], (U)OBF_CF_MAP(base))) // real
+                BLOCK_FALSE(row[physical] = cipher<U, Variant>::mix(cipher<U, Variant>::mix(row[physical], (U)OBF_CF_MAP(base + 2u)), (U)OBF_CF_MAP(base + 2u)))
+                BLOCK_FALSE(row[physical] = cipher<U, Variant>::mix(cipher<U, Variant>::mix(row[physical], (U)OBF_CF_MAP(base + 3u)), (U)OBF_CF_MAP(base + 3u)))
+                BLOCK_TRUE(row[physical] = payload_cipher<U, Variant, Site>::decode(row[physical], (U)OBF_SITE_MAP(Site, base))) // real
             )
-            BLOCK_FALSE(row[i] = cipher<U, Variant>::mix(cipher<U, Variant>::mix(row[i], (U)OBF_CF_MAP(base + 4u)), (U)OBF_CF_MAP(base + 4u)))
+            BLOCK_FALSE(row[physical] = cipher<U, Variant>::mix(cipher<U, Variant>::mix(row[physical], (U)OBF_CF_MAP(base + 4u)), (U)OBF_CF_MAP(base + 4u)))
         }
 #else
-        for (size_t i = 0; i < Size; ++i)
-            row[i] = cipher<U, Variant>::mix(row[i], key_at<U>(Key, (unsigned)i));
+        for (size_t i = 0; i < Size; ++i) {
+            const size_t physical = payload_layout<Size, Site>::at(i);
+            row[physical] = payload_cipher<U, Variant, Site>::decode(input[physical], key_at<U>(Key, (unsigned)i));
+        }
 #endif
     }
 
-    template <class T, class U, size_t Size, unsigned char Key, int Slots, int Real, unsigned Seed, int Variant>
+    template <class T, class U, size_t Size, unsigned Key, int Slots, int Real, unsigned Seed, int Variant>
     class vault {
         static_assert(Size > 0, "obfusheader: empty payload");
         static_assert(Slots > 0 && Real >= 0 && Real < Slots, "obfusheader: vault slot out of range");
@@ -1220,22 +1391,28 @@ namespace obf {
         // of its own parameter, so `fill(&value)` would silently fail here.
         INLINE constexpr vault(T value) { fill_value(value); }
 
-        INLINE operator T*() { return reinterpret_cast<T*>(decoded()); }
+        INLINE operator T*() { return decoded(); }
         INLINE operator T() { return (T)decoded()[0]; }
+
+        INLINE void erase() {
+            volatile T* output = plaintext_;
+            for (size_t i = 0; i < Size; ++i) output[i] = (T)0;
+            ready_ = 0u;
+        }
 
     private:
         // The row index is stored masked, so no instruction carries the real slot.
-        INLINE static constexpr unsigned mask() { return (Seed * k::mul32(OBF_K_SLOT)) & 0xFFFFu; }
+        INLINE static constexpr unsigned mask() { return Seed * k::mul32(OBF_K_SLOT); }
         INLINE static int slot() {
-            return (int)(OBF_CF_MAP((OBF_CF_T)((OBF_CF_T)Real ^ (OBF_CF_T)mask())) ^ (OBF_CF_T)mask());
+            return (int)(OBF_SITE_MAP(Seed, (OBF_CF_T)((OBF_CF_T)Real ^ (OBF_CF_T)mask())) ^ (OBF_CF_T)mask());
         }
 
         // Junk rows come from the site seed: same width, same look, no meaning.
-        INLINE static constexpr unsigned decoy_byte(int row, unsigned index) {
+        INLINE static constexpr unsigned long long decoy_byte(int row, unsigned index) {
             unsigned long long h = ((unsigned long long)Seed + (unsigned long long)(row + 1) * k::mul64(OBF_K_KA))
                                  ^ ((unsigned long long)index * k::mul64(OBF_K_D1));
             h ^= h >> k::shr(OBF_K_D2, 28u, 40u); h *= k::mul64(OBF_K_KC); h ^= h >> k::shr(OBF_K_S2, 25u, 36u);
-            return (unsigned)h;
+            return h;
         }
 
         // The payload checksum, taken over the plaintext at compile time and over the
@@ -1258,7 +1435,7 @@ namespace obf {
                     if (real) {
                         const U plain = (U)src[i];
                         h = hash_step(h, plain);
-                        rows_[s][i] = cipher<U, Variant>::mix(plain, key_at<U>(Key, (unsigned)i));
+                        rows_[s][payload_layout<Size, Seed>::at(i)] = payload_cipher<U, Variant, Seed>::encode(plain, key_at<U>(Key, (unsigned)i));
                     } else {
                         rows_[s][i] = (U)decoy_byte(s, (unsigned)i);
                     }
@@ -1278,7 +1455,7 @@ namespace obf {
                     if (real) {
                         const U plain = (U)value;
                         h = hash_step(h, plain);
-                        rows_[s][i] = cipher<U, Variant>::mix(plain, key_at<U>(Key, (unsigned)i));
+                        rows_[s][payload_layout<Size, Seed>::at(i)] = payload_cipher<U, Variant, Seed>::encode(plain, key_at<U>(Key, (unsigned)i));
                     } else {
                         rows_[s][i] = (U)decoy_byte(s, (unsigned)i);
                     }
@@ -1287,24 +1464,33 @@ namespace obf {
             check_ = XOR(h, mask());
         }
 
-        INLINE U* decoded() {
+        INLINE T* decoded() {
             U* row = &rows_[slot()][0];
             if (ready_ == 0u) {
                 ready_ = 1u;
-                xor_decode<U, Key, Size, Variant>(row);
+                xor_decode<U, Key, Size, Variant, Seed>(row);
 #if VAULT_CHECK
                 // Recompute a checksum the compiler took from the plaintext. If the
-                // ciphertext or the decryptor was patched it no longer matches, so the
-                // payload is quietly re-encrypted instead of handed out.
+                // A failed check returns a zeroed buffer. Re-encrypted garbage could
+                // lose a string's terminator and make callers read past the row.
                 unsigned h = check_seed();
-                for (size_t i = 0; i < Size; ++i) h = hash_step(h, row[i]);
+                for (size_t i = 0; i < Size; ++i) h = hash_step(h, row[payload_layout<Size, Seed>::at(i)]);
                 if (h != (unsigned)XOR(check_, mask())) {
-                    xor_decode<U, Key, Size, Variant>(row);
+                    volatile U* rejected = row;
+                    for (size_t i = 0; i < Size; ++i) rejected[i] = 0;
                     STACKBRK;
                 }
 #endif
+                // Use real T objects: casting unsigned storage to wchar_t*,
+                // char16_t* or bool* violates aliasing/object representation rules.
+                for (size_t i = 0; i < Size; ++i) plaintext_[i] = (T)row[payload_layout<Size, Seed>::at(i)];
+                // Retain only the caller-visible plaintext copy, not another one
+                // in the vault row. Ciphertext writes must survive optimization.
+                volatile U* stored = row;
+                for (size_t i = 0; i < Size; ++i)
+                    stored[payload_layout<Size, Seed>::at(i)] = payload_cipher<U, Variant, Seed>::encode((U)plaintext_[i], key_at<U>(Key, (unsigned)i));
             }
-            return row;
+            return plaintext_;
         }
 
         // Every member gets a default initializer: Visual C++'s constexpr evaluator
@@ -1312,9 +1498,24 @@ namespace obf {
         // rejects the constructor otherwise (C3615) even though the body assigns every
         // element. clang accepts either form, so this has to be tested on MSVC.
         U rows_[Slots][Size]{};
+        T plaintext_[Size]{};
         unsigned check_ = 0u;
         unsigned char ready_ = 0u;
     };
+
+    // The compile-time vault stays a literal type. Only runtime owners have a
+    // destructor, so C++14 constant initialization and normal pointer lifetimes
+    // are preserved without retaining an extra plaintext copy after destruction.
+    template <class V>
+    class owned_vault : public V {
+    public:
+        explicit owned_vault(const V& source) : V(source) {}
+        owned_vault(const owned_vault&) = default;
+        owned_vault& operator=(const owned_vault&) = default;
+        ~owned_vault() { this->erase(); }
+    };
+    template <class V>
+    using runtime_vault = typename meta::conditional<CONST_CLEAR != 0, owned_vault<V>, V>::type;
 }
 
     // A payload has to be produced by a *constexpr static* initializer: constant
@@ -1326,16 +1527,16 @@ namespace obf {
     // THREADLOCAL mode decrypts once per thread and hands out a copy of that.
     #define OBF_KEY_NORMAL(x, args) []() { \
         constexpr static auto obf_stored = obf::vault<args>(x); \
-        return obf_stored; }()
-    #define OBF_KEY_THREADLOCAL(x, args) []() { \
+        return obf::runtime_vault<obf::vault<args>>(obf_stored); }()
+    #define OBF_KEY_THREADLOCAL(x, args) []() -> obf::runtime_vault<obf::vault<args>>& { \
         constexpr static auto obf_stored = obf::vault<args>(x); \
-        thread_local auto obf_cached = obf_stored; \
+        thread_local obf::runtime_vault<obf::vault<args>> obf_cached(obf_stored); \
         return obf_cached; }()
 
     #define OBF_VAULT_ARGS(x) \
         obf::payload_t<decltype(obf::gettype(x))>, obf::cipher_t<decltype(obf::gettype(x))>, \
-        obf::getsize(x), (unsigned char)RND(1, 255), VAULT_SLOTS, RND(0, VAULT_SLOTS - 1), \
-        (unsigned)RND(1, 0xFFFF), RND(0, OBF_CIPHER_VARIANTS - 1)
+        obf::getsize(x), OBF_ENTROPY, VAULT_SLOTS, RND(0, VAULT_SLOTS - 1), \
+        OBF_ENTROPY, RND(0, OBF_PAYLOAD_VARIANTS - 1)
 
 #if CONST_ENCRYPTION
     #if CONST_ENCRYPT_MODE == OBF_MODE_NORMAL
@@ -1375,7 +1576,7 @@ namespace obf {
     #define WATERMARK(...)                                                       \
         const char* obf_wm_[] = { __VA_ARGS__ };                                 \
         for (volatile size_t obf_wm_i_ = 0;                                      \
-             obf_wm_i_ < sizeof(obf_wm_) / sizeof(obf_wm_[0]); ++obf_wm_i_)      \
+             obf_wm_i_ < sizeof(obf_wm_) / sizeof(obf_wm_[0]); obf_wm_i_ = obf_wm_i_ + 1u) \
             obf_prev_draw(obf_wm_[obf_wm_i_]);
 #endif
 
@@ -1453,24 +1654,34 @@ static void obf_wm_sink() {
             return call_decoy<T, Seed, Slot>();
         }
 
+        template <unsigned Seed>
+        INLINE constexpr OBF_UINT call_mask(unsigned slot) {
+            return (OBF_UINT)k::draw(Seed ^ (slot * 0x9e3779b9u + 0x4bu));
+        }
+
+        template <typename T, int Real, T Value, unsigned Seed, int Slot>
+        INLINE OBF_UINT masked_call_entry() {
+            return RCAST(OBF_UINT, (call_entry<T, Real, Value, Seed, Slot>())) ^ call_mask<Seed>((unsigned)Slot);
+        }
+
         template <typename T, int N, int Real, T Value, unsigned Seed, int... Slots>
         struct call_hider {
             static_assert(sizeof...(Slots) == (size_t)N, "obfusheader: the slot list must match CALL_SLOTS");
             static_assert(Real >= 0 && Real < N, "obfusheader: call slot index out of range");
 
-            static T table[N];
-
             // The index is derived from the template argument, never from a second
             // RND() draw: expanding the draw twice is what used to make the table
             // return a decoy instead of the target.
             static INLINE T get() {
-                const OBF_CF_T m = (OBF_CF_T)(Seed * k::mul32(OBF_K_SLOT)) & 0xFFFFu;
-                return table[(int)(OBF_CF_MAP((OBF_CF_T)Real ^ m) ^ m)];
+                // Per-slot masks hide plain function pointers in runtime tables.
+                // Local static initialization also handles calls before main and
+                // concurrent first use without cross-TU initialization ordering.
+                static OBF_UINT volatile table[N] = { masked_call_entry<T, Real, Value, Seed, Slots>()... };
+                const OBF_CF_T m = (OBF_CF_T)(Seed * k::mul32(OBF_K_SLOT));
+                const unsigned index = (unsigned)(OBF_SITE_MAP(Seed, (OBF_CF_T)Real ^ m) ^ m);
+                return RCAST(T, (table[index] ^ call_mask<Seed>(index)));
             }
         };
-
-        template <typename T, int N, int Real, T Value, unsigned Seed, int... Slots>
-        T call_hider<T, N, Real, Value, Seed, Slots...>::table[N] = { call_entry<T, Real, Value, Seed, Slots>()... };
     }
 
     // The index pack handed to call_hider must contain exactly CALL_SLOTS entries, so
@@ -1490,7 +1701,7 @@ static void obf_wm_sink() {
 
     #define HIDE_PTR_I(ptr, index) \
         obf::call_hider<meta::decay_t<decltype(ptr)>, CALL_SLOTS, (index), (ptr), \
-                        (unsigned)RND(1, 0xFFFF), OBF_CALL_SLOTS_LIST>::get()
+                        OBF_ENTROPY, OBF_CALL_SLOTS_LIST>::get()
     #define HIDE_PTR(ptr) HIDE_PTR_I(ptr, RND(0, CALL_SLOTS - 1))
     #define CALL(ptr, ...) (HIDE_PTR(ptr)(__VA_ARGS__))
 #else
@@ -1597,6 +1808,7 @@ namespace obf {
             const unsigned char* opt = nt + 24;
             const unsigned char* dirs = opt + (*(unsigned short*)opt == 0x20bu ? 112u : 96u);
             const unsigned export_rva = *(const unsigned*)dirs;
+            const unsigned export_size = *(const unsigned*)(dirs + 4);
             if (export_rva == 0) return 0;
             const unsigned char* exp = img + export_rva;
             const unsigned n_names = *(const unsigned*)(exp + 24);
@@ -1606,8 +1818,11 @@ namespace obf {
             if (funcs == 0 || names == 0 || ords == 0) return 0;
             for (unsigned i = 0; i < n_names; ++i) {
                 if (hash_runtime((const char*)(img + names[i])) == sym_hash) {
+                    if (ords[i] >= *(const unsigned*)(exp + 20)) return 0;
                     const unsigned rva = funcs[ords[i]];
-                    if (rva >= export_rva) return 0; // a forwarded export, let the caller fall back
+                    if (rva == 0) return 0;
+                    if (rva >= export_rva && rva - export_rva < export_size)
+                        return 0; // a forwarded export, let the caller fall back
                     return (void*)(img + rva);
                 }
             }
@@ -1677,7 +1892,7 @@ namespace obf {
             for (int i = 0; i < 64; ++i) {
                 const long t = d[i].tag;
                 if (t == OBF_DT_NULL) return true;
-                if (t < 0 || t > 0x7ffffffL) return false;
+                if (t < 0 || t > 0x7fffffffL) return false;
             }
             return false;
         }
@@ -1699,46 +1914,59 @@ namespace obf {
             return (void*)addr;
         }
 
-        INLINE void* find_in_object(const link_map* m, unsigned sym_hash, unsigned elf_hash) {
+        // glibc relocates dynamic pointers in regular DSOs, but not in the vDSO.
+        INLINE unsigned long dynamic_address(const link_map* m, unsigned long value) {
+            return m->load_addr != 0 && value < m->load_addr ? m->load_addr + value : value;
+        }
+
+        INLINE void* find_in_object(const link_map* m, unsigned sym_hash, unsigned elf_hash, unsigned gnu_hash = 0) {
             const dyn* d = m->dynamic;
             if (!sane(d)) return 0;
             const dyn* d_str = tag(d, OBF_DT_STRTAB);
             const dyn* d_sym = tag(d, OBF_DT_SYMTAB);
             if (d_str == 0 || d_sym == 0) return 0;
-            const char* strtab = (const char*)d_str->val;
-            const unsigned char* symtab = (const unsigned char*)d_sym->val;
+            const char* strtab = (const char*)dynamic_address(m, d_str->val);
+            const unsigned char* symtab = (const unsigned char*)dynamic_address(m, d_sym->val);
             if (strtab == 0 || symtab == 0) return 0;
 
             const dyn* d_syment = tag(d, OBF_DT_SYMENT);
-            size_t syment = (d_syment != 0 && d_syment->val >= sizeof(sym)) ? (size_t)d_syment->val : sizeof(sym);
+            if (d_syment != 0 && d_syment->val != sizeof(sym)) return 0;
             const unsigned long bias = m->load_addr;
             const sym* table = (const sym*)symtab;
 
             const dyn* d_gnu = tag(d, OBF_DT_GNU_HASH);
             if (d_gnu != 0) {
-                const unsigned* g = (const unsigned*)d_gnu->val;
+                const unsigned* g = (const unsigned*)dynamic_address(m, d_gnu->val);
                 const unsigned nbuckets = g[0], symoffset = g[1], nbloom = g[2];
+                if (nbuckets == 0 || nbloom == 0) return 0;
                 const unsigned* buckets = g + 4 + nbloom * (unsigned)(sizeof(void*) / sizeof(unsigned));
                 const unsigned* chains = buckets + nbuckets;
-                for (unsigned y = buckets[elf_hash % nbuckets]; y >= symoffset; ++y) {
-                    const unsigned c = chains[y];
-                    if ((c & ~1u) == elf_hash) {
-                        const sym* s = &table[y];
-                        if (s->shndx != OBF_SHN_UNDEF && hash_runtime(strtab + s->name) == sym_hash)
-                            return finish(s->value + bias, s->info);
+                // Legacy direct callers without a GNU hash scan each bucket.
+                const unsigned first = gnu_hash ? gnu_hash % nbuckets : 0u;
+                const unsigned last = gnu_hash ? first + 1u : nbuckets;
+                for (unsigned b = first; b < last; ++b) {
+                    for (unsigned y = buckets[b]; y != 0u && y >= symoffset; ++y) {
+                        const unsigned c = chains[y - symoffset];
+                        if (!gnu_hash || (c | 1u) == (gnu_hash | 1u)) {
+                            const sym* s = &table[y];
+                            if (s->shndx != OBF_SHN_UNDEF && hash_runtime(strtab + s->name) == sym_hash)
+                                return finish(s->value + bias, s->info);
+                        }
+                        if ((c & 1u) != 0u) break; // last entry of this bucket
                     }
-                    if ((c & 1u) != 0u) break; // last entry of this bucket
                 }
                 return 0;
             }
 
             const dyn* d_sysv = tag(d, OBF_DT_HASH);
             if (d_sysv != 0) {
-                const unsigned* h = (const unsigned*)d_sysv->val;
+                const unsigned* h = (const unsigned*)dynamic_address(m, d_sysv->val);
                 const unsigned nbucket = h[0], nchain = h[1];
+                if (nbucket == 0) return 0;
                 const unsigned* buckets = h + 2;
                 const unsigned* chains = buckets + nbucket;
-                for (unsigned y = buckets[elf_hash % (nbucket ? nbucket : 1u)]; y != 0u && y < nchain; y = chains[y]) {
+                unsigned guard = 0;
+                for (unsigned y = buckets[elf_hash % nbucket]; y != 0u && y < nchain && guard++ < nchain; y = chains[y]) {
                     const sym* s = &table[y];
                     if (s->shndx != OBF_SHN_UNDEF && hash_runtime(strtab + s->name) == sym_hash)
                         return finish(s->value + bias, s->info);
@@ -1747,7 +1975,7 @@ namespace obf {
             return 0;
         }
 
-        INLINE void* resolve(unsigned mod_hash, unsigned sym_hash, unsigned elf_hash) {
+        INLINE void* resolve(unsigned mod_hash, unsigned sym_hash, unsigned elf_hash, unsigned gnu_hash = 0) {
             if ((const void*)_DYNAMIC == 0) return 0;
             // DT_DEBUG is filled in by the dynamic linker with the address of its own
             // r_debug block, which is how the loaded objects are enumerated without
@@ -1758,7 +1986,7 @@ namespace obf {
             for (int guard = 0; m != 0 && guard < 256; m = m->next, ++guard) {
                 if (!sane(m->dynamic)) break;
                 if (mod_hash != 0 && hash_basename(m->name) != mod_hash) continue;
-                void* found = find_in_object(m, sym_hash, elf_hash);
+                void* found = find_in_object(m, sym_hash, elf_hash, gnu_hash);
                 if (found != 0) return found;
                 if (mod_hash != 0) break;
             }
@@ -1769,42 +1997,59 @@ namespace obf {
 
     // Resolves one import. The hashes are compile-time constants; the ASCII hints are
     // only ever used by the loader API fallback, and are themselves encrypted.
-    template <unsigned ModHash, unsigned SymHash, unsigned ElfHash, unsigned Mask>
+    template <unsigned ModHash, unsigned SymHash, unsigned ElfHash, unsigned Mask, unsigned GnuHash = 0>
     struct import_slot {
-        static void* masked_;
+        static INLINE constexpr uintptr_t cache_mask() { return (uintptr_t)k::draw(Mask) | (uintptr_t)1; }
+#if IMPORT_CACHE
+        static std::atomic<uintptr_t> masked_;
+#endif
 
         static INLINE void* get(const char* mod_hint, const char* sym_hint) {
+            OBF_UNUSED(mod_hint);
+            OBF_UNUSED(sym_hint);
 #if IMPORT_CACHE
-            OBF_UINT cached = (OBF_UINT)(uintptr_t)masked_;
-            if (cached != 0u) return (void*)(uintptr_t)(cached ^ (OBF_UINT)Mask);
+            OBF_UINT cached = masked_.load(std::memory_order_acquire);
+            if (cached != 0u) return (void*)(uintptr_t)(cached ^ cache_mask());
 #endif
             void* p = 0;
 #if IMPORT_RESOLVER != OBF_RESOLVER_API
         #if OBF_WINDOWS
             p = pe::resolve(ModHash, SymHash);
         #elif OBF_LINUX
-            p = elf::resolve(ModHash, SymHash, ElfHash);
+            p = elf::resolve(ModHash, SymHash, ElfHash, GnuHash);
         #endif
 #endif
 #if IMPORT_RESOLVER != OBF_RESOLVER_MANUAL
-            if (p == 0) {
+            if (p == 0 && sym_hint != 0) {
                 #if OBF_WINDOWS && !KERNEL_MODE
                     p = (void*)GetProcAddress(GetModuleHandleA(mod_hint), sym_hint);
                 #elif OBF_LINUX && !KERNEL_MODE
-                    p = dlsym(RTLD_DEFAULT, sym_hint);
+                    if (ModHash == 0) {
+                        p = dlsym(RTLD_DEFAULT, sym_hint);
+                    } else if (mod_hint != 0) {
+                        // Honor the requested module and do not load new libraries.
+                        void* handle = dlopen(mod_hint, RTLD_LAZY | RTLD_NOLOAD);
+                        if (handle != 0) {
+                            p = dlsym(handle, sym_hint);
+                            dlclose(handle);
+                        }
+                    }
                 #endif
             }
 #endif
             if (p == 0) STACKBRK;
 #if IMPORT_CACHE
-            masked_ = (void*)(uintptr_t)((OBF_UINT)(uintptr_t)p ^ (OBF_UINT)Mask);
+            // Do not cache misses: a module can be loaded after the first lookup.
+            if (p != 0) masked_.store((uintptr_t)p ^ cache_mask(), std::memory_order_release);
 #endif
             return p;
         }
     };
 
-    template <unsigned ModHash, unsigned SymHash, unsigned ElfHash, unsigned Mask>
-    void* import_slot<ModHash, SymHash, ElfHash, Mask>::masked_ = 0;
+#if IMPORT_CACHE
+    template <unsigned ModHash, unsigned SymHash, unsigned ElfHash, unsigned Mask, unsigned GnuHash>
+    std::atomic<uintptr_t> import_slot<ModHash, SymHash, ElfHash, Mask, GnuHash>::masked_{0};
+#endif
 }
 
 #if IMPORT_RESOLVER == OBF_RESOLVER_MANUAL
@@ -1815,21 +2060,26 @@ namespace obf {
 #endif
 
 #if OBF_WINDOWS
-    #define CALL_EXPORT(mod, sym, proto, ...) \
-        (((proto)obf::import_slot<OBF_HASH_LOWER(mod), OBF_HASH(sym), OBF_ELF_HASH(sym), \
-                              (unsigned)RND(1, 0xFFFF)>::get(OBF_IMPORT_HINT(mod), OBF_IMPORT_HINT(sym)))(__VA_ARGS__))
+    #define GET_EXPORT(mod, sym, proto) \
+        ((proto)obf::import_slot<OBF_HASH_LOWER(mod), OBF_HASH(sym), OBF_ELF_HASH(sym), \
+                              OBF_ENTROPY>::get(OBF_IMPORT_HINT(mod), OBF_IMPORT_HINT(sym)))
 #elif OBF_LINUX
-    #define CALL_EXPORT(mod, sym, proto, ...) \
-        (((proto)obf::import_slot<OBF_HASH(mod), OBF_HASH(sym), OBF_ELF_HASH(sym), \
-                              (unsigned)RND(1, 0xFFFF)>::get(OBF_IMPORT_HINT(mod), OBF_IMPORT_HINT(sym)))(__VA_ARGS__))
+    #define GET_EXPORT(mod, sym, proto) \
+        ((proto)obf::import_slot<OBF_HASH(mod), OBF_HASH(sym), OBF_ELF_HASH(sym), \
+                              OBF_ENTROPY, obf::hash_gnu(sym)>::get(OBF_IMPORT_HINT(mod), OBF_IMPORT_HINT(sym)))
+#endif
+#if OBF_WINDOWS || OBF_LINUX
+    #define CALL_EXPORT(mod, sym, proto, ...) (GET_EXPORT(mod, sym, proto)(__VA_ARGS__))
 #endif
 
 /* Legacy C path: no constexpr, so the names cannot be hashed at compile time. */
 #else
     #if OBF_WINDOWS && !KERNEL_MODE
-        #define CALL_EXPORT(mod, sym, proto, ...) (((proto)GetProcAddress(GetModuleHandleA(mod), sym))(__VA_ARGS__))
+        #define GET_EXPORT(mod, sym, proto) ((proto)GetProcAddress(GetModuleHandleA(mod), sym))
+        #define CALL_EXPORT(mod, sym, proto, ...) (GET_EXPORT(mod, sym, proto)(__VA_ARGS__))
     #elif OBF_LINUX && !KERNEL_MODE
-        #define CALL_EXPORT(mod, sym, proto, ...) (((proto)dlsym(RTLD_DEFAULT, sym))(__VA_ARGS__))
+        #define GET_EXPORT(mod, sym, proto) ((proto)dlsym(RTLD_DEFAULT, sym))
+        #define CALL_EXPORT(mod, sym, proto, ...) (GET_EXPORT(mod, sym, proto)(__VA_ARGS__))
     #endif
 #endif
 
@@ -1897,7 +2147,7 @@ namespace obf {
     static void obf_fake_touch(void) {
         volatile uintptr_t obf_sink_ = 0u;
         for (volatile size_t obf_i_ = 0;
-             obf_i_ < sizeof(obf_fake_refs) / sizeof(obf_fake_refs[0]); ++obf_i_)
+             obf_i_ < sizeof(obf_fake_refs) / sizeof(obf_fake_refs[0]); obf_i_ = obf_i_ + 1u)
             obf_sink_ = (uintptr_t)obf_fake_refs[obf_i_];
         OBF_UNUSED(obf_sink_);
     }
@@ -2013,6 +2263,67 @@ namespace obf {
  * only fires when '(' directly follows 'if'.
  * ============================================================================= */
 
+#if OBF_MSVC
+    #define OBF_NORETURN __declspec(noreturn)
+#elif OBF_GNU
+    #define OBF_NORETURN __attribute__((noreturn))
+#elif defined(__cplusplus)
+    #define OBF_NORETURN [[noreturn]]
+#else
+    #define OBF_NORETURN
+#endif
+
+// A fake else path must not appear to fall through a function that returns from
+// both real branches (including the else of if constexpr). It never executes.
+OBF_NORETURN static NOINLINE void obf_cf_decoy_end(void) {
+#if JUNK_TRAP && OBF_ASM_ENABLED
+    #if OBF_GNU
+        __builtin_trap();
+    #elif OBF_MSVC
+        __debugbreak();
+    #endif
+#endif
+    for (;;) {
+        volatile unsigned kept = 0u;
+        (void)kept;
+        ASM_JUNK;
+    }
+}
+
+#ifdef __cplusplus
+    #if CFLOW_ASM_JUNK
+        #define OBF_SWITCH_CX
+    #else
+        #define OBF_SWITCH_CX constexpr
+    #endif
+    namespace obf {
+        template <class T>
+        struct switch_is_class : meta::integral_constant<bool, __is_class(T) || __is_union(T)> {};
+        template <class T, bool Class = switch_is_class<meta::decay_t<T>>::value>
+        struct switch_adapter {
+            typedef meta::decay_t<T> result_type;
+            template <unsigned Site>
+            static INLINE OBF_SWITCH_CX result_type map(T&& value) {
+                return (result_type)OBF_SITE_MAP(Site, (OBF_CF_T)value);
+            }
+        };
+        // Leave contextual class conversions to the switch itself, without copies
+        // or substituting an overloaded unary operator for that conversion.
+        template <class T>
+        struct switch_adapter<T, true> {
+            template <unsigned Site>
+            static INLINE OBF_SWITCH_CX T&& map(T&& value) {
+                (void)OBF_SITE_MAP(Site, (OBF_CF_T)Site);
+                return static_cast<T&&>(value);
+            }
+        };
+        template <unsigned Site, class T>
+        INLINE OBF_SWITCH_CX decltype(auto) switch_map(T&& value) {
+            return switch_adapter<T>::template map<Site>(static_cast<T&&>(value));
+        }
+    }
+#endif
+
 #if CFLOW_BRANCHING
 
 #if CFLOW_IF
@@ -2038,7 +2349,7 @@ namespace obf {
 #endif
 
 #if CFLOW_RETURN
-#if CFLOW_ASM_JUNK || (__cplusplus >= 202002L)
+#if CFLOW_ASM_JUNK || ((__cplusplus >= 202002L) && !OBF_MSVC)
     // A switch whose only reachable label is default always returns, so no compiler
     // can claim a missing return value - which a guard loop does: -Wreturn-type used to
     // fire on every lambda inside OBF(). `case 0:` exists only because MSVC warns
@@ -2051,14 +2362,16 @@ namespace obf {
     // loop wrapper makes clang claim a missing return value (a conditional loop is
     // always treated as escapable). Both are wrong for the constexpr-safe mode, which
     // exists precisely to keep compile-time code compiling, so `return` is left alone
-    // there: if/else/for/while/switch still get the full mutation.
+    // there: if/else/for/while/switch still get the full mutation. MSVC's C++20
+    // constexpr evaluator also loses the return through this label wrapper, so
+    // its constexpr-safe mode keeps return untouched at every language level.
 #endif
 #endif
 
 #if CFLOW_ELSE
     // The trailing `else` rebinds to the fake branch that can never be taken, which
     // keeps the user's else attached to the user's if.
-    #define else else if (OBF_CF_TRUTH(OBF_PRED_FALSE)) { ASM_JUNK; } else
+    #define else else if (OBF_CF_TRUTH(OBF_PRED_FALSE)) { ASM_JUNK; obf_cf_decoy_end(); } else
 #endif
 
 #endif /* CFLOW_BRANCHING */

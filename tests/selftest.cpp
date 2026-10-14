@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "..\include\obfusheader.h"
+#include "../include/obfusheader.h"
 
 static int failures = 0;
 static int checks = 0;
@@ -27,6 +27,12 @@ static int checks = 0;
 NOINLINE void set_int(int* dst, int value) { *dst = value; }
 NOINLINE int get_int(int value) { return value; }
 NOINLINE int no_args() { return 42; }
+NOINLINE int returning_ifelse(bool value) {
+    if (value) return 17;
+    else return 29;
+}
+// Hidden calls must also work during static initialization, before main.
+static const int early_call = CALL(&no_args);
 
 // Local copy helper: the tests must not depend on INLINE_STD being on, and libc's
 // strcpy makes MSVC emit C4996 in every build.
@@ -123,6 +129,7 @@ static void test_array_encryption() {
 
 // --------------------------------------------------------------- call hiding
 static void test_call_hiding() {
+    CHECK(early_call == 42);
     int value = 0;
     CALL(&set_int, &value, 123);
     CHECK(value == 123);
@@ -137,7 +144,7 @@ static void test_call_hiding() {
 
     // an explicit slot index must agree with the table it selects
     int direct = 0;
-    HIDE_PTR_I(&set_int, 3)(&direct, 9);
+    HIDE_PTR_I(&set_int, CALL_SLOTS - 1)(&direct, 9);
     CHECK(direct == 9);
 
     CHECK(HIDE_PTR(&get_int)(7) == 7);
@@ -440,9 +447,9 @@ static void test_compile_time_flow() {
 template <class T>
 static int constexpr_probe(T v) {
     if constexpr (sizeof(T) > 4)
-        return v * 2;
+        return (int)(v * 2);
     else
-        return v;
+        return (int)v;
 }
 static void test_if_constexpr() {
     CHECK(constexpr_probe(3) == 3);
@@ -489,6 +496,33 @@ static void test_misc() {
 }
 
 int main() {
+    CHECK(returning_ifelse(true) == 17);
+    CHECK(returning_ifelse(false) == 29);
+    const unsigned long long high = 0xfedcba9876543210ull;
+    switch (high) { case 0xfedcba9876543210ull: CHECK(true); break; default: CHECK(false); }
+    enum class choice : unsigned long long { high = 0xfedcba9876543210ull };
+    switch (choice::high) { case choice::high: CHECK(true); break; default: CHECK(false); }
+    struct token {
+        int& calls;
+        explicit token(int& c) : calls(c) {}
+        token(const token&) = delete;
+        operator int() { ++calls; return 7; }
+    };
+    int conversions = 0;
+    token context(conversions);
+    switch (context) { case 7: CHECK(conversions == 1); break; default: CHECK(false); }
+    switch (0x123456789abcdefLL) {
+        case 0x123456789abcdefLL: CHECK(true); break;
+        default: CHECK(false);
+    }
+    // Comma operands must be sequenced and only the final one converts to bool.
+    int sequence = 0;
+    if (++sequence, sequence *= 2, sequence == 2) { CHECK(sequence == 2); }
+    else { CHECK(false); }
+    switch (++sequence, sequence *= 2, sequence) {
+        case 6: CHECK(sequence == 6); break;
+        default: CHECK(false);
+    }
     test_bool_encryption();
     test_scalar_encryption();
     test_string_encryption();
